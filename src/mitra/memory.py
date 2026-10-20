@@ -1,0 +1,283 @@
+"""Mitra — память в три яруса: горячая, тёплая, холодная.
+
+Правило, ради которого всё и делается: **контекст не растёт, растёт база.**
+Запрос собирается под жёсткий бюджет токенов, и рядом возвращается честный
+отчёт — что влезло, что не влезло. Модель получает «я не помню X» вместо
+молчаливого обрезания.
+
+- горячая: очередь конвертов (SQLite) — цель и задача всегда в контексте;
+- тёплая: факты с версиями и связями (SQLite + FTS5, trigram) — по запросу;
+- холодная: артефакты по sha256 — достаются по хешу, только если влезли.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
+
+CHARS_PER_TOKEN = 220.0  # домашняя конвенция: ~220 символов на условный токен
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS envelopes (
+    id TEXT PRIMARY KEY, created_at REAL NOT NULL, ttl_s REAL NOT NULL,
+    sender TEXT, recipient TEXT, goal TEXT, task TEXT, capability TEXT,
+    token_budget INTEGER, context_query TEXT, cold_refs TEXT,
+    mandate TEXT, price_usdc REAL, status TEXT, claimed_by TEXT,
+    claimed_at REAL, result TEXT, signature TEXT, routing TEXT);
+CREATE INDEX IF NOT EXISTS ix_env ON envelopes(status, created_at);
+
+CREATE TABLE IF NOT EXISTS facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, kind TEXT,
+    tags TEXT, importance INTEGER, source TEXT, session TEXT,
+    created_at REAL, updated_at REAL, status TEXT DEFAULT 'active',
+    superseded_by INTEGER);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(text, tags, tokenize='trigram');
+
+CREATE TABLE IF NOT EXISTS edges (
+    src INTEGER NOT NULL, relation TEXT NOT NULL, dst INTEGER NOT NULL,
+    created_at REAL, PRIMARY KEY (src, relation, dst));
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, envelope_id TEXT,
+    kind TEXT, payload TEXT);
+"""
+
+FTS_TRIGGERS = """
+CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+  INSERT INTO facts_fts(rowid, text, tags) VALUES (new.id, new.text, new.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+  INSERT INTO facts_fts(facts_fts, rowid, text, tags) VALUES('delete', old.id, old.text, old.tags);
+END;
+CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+  INSERT INTO facts_fts(facts_fts, rowid, text, tags) VALUES('delete', old.id, old.text, old.tags);
+  INSERT INTO facts_fts(rowid, text, tags) VALUES (new.id, new.text, new.tags);
+END;
+"""
+
+
+class Memory:
+    """Одно хранилище: очередь + факты + холодные артефакты."""
+
+    def __init__(self, path: str | Path | None = None, cold_dir: str | Path | None = None):
+        self.path = Path(path or os.environ.get("MITRA_DB", Path.home() / ".mitra" / "mitra.db"))
+        self.cold_dir = Path(cold_dir or os.environ.get("MITRA_COLD", Path.home() / ".mitra" / "cold"))
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(str(self.path))
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(SCHEMA)
+        self.conn.executescript(FTS_TRIGGERS)
+        self.conn.commit()
+
+    # ── очередь ───────────────────────────────────────────────
+    def put(self, env: Any) -> None:
+        d = env.to_dict()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO envelopes(id, created_at, ttl_s, sender, recipient,"
+            " goal, task, capability, token_budget, context_query, cold_refs, mandate,"
+            " price_usdc, status, claimed_by, claimed_at, result, signature, routing)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (d["id"], d["created_at"], d["ttl_s"], d["sender"], d.get("to", "*"), d["goal"],
+             d["task"], json.dumps(d.get("capability", [])), d.get("token_budget", 2000),
+             d.get("context_query", ""), json.dumps(d.get("cold_refs", [])),
+             json.dumps(d.get("mandate") or {}), d.get("price_usdc"), d.get("status", "queued"),
+             None, None, json.dumps(d.get("result")) if d.get("result") else None,
+             json.dumps(d.get("signature", {})), json.dumps(d.get("routing", {}))))
+        self.event(d["id"], "put", {"to": d.get("recipient")})
+        self.conn.commit()
+
+    def _row(self, env_id: str) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM envelopes WHERE id=?", (env_id,)).fetchone()
+
+    def expire(self, now: float | None = None) -> int:
+        now = now or time.time()
+        rows = self.conn.execute("SELECT id FROM envelopes WHERE status='queued' AND created_at + ttl_s < ?",
+                                 (now,)).fetchall()
+        for r in rows:
+            self.conn.execute("UPDATE envelopes SET status='expired' WHERE id=?", (r["id"],))
+            self.event(r["id"], "expired", {})
+        self.conn.commit()
+        return len(rows)
+
+    def inbox(self, agent: str, limit: int = 10) -> list[dict[str, Any]]:
+        self.expire()
+        rows = self.conn.execute(
+            "SELECT * FROM envelopes WHERE status='queued' AND (recipient=? OR recipient='*')"
+            " ORDER BY created_at LIMIT ?", (agent, limit)).fetchall()
+        return [self._to_env(r) for r in rows]
+
+    def claim(self, env_id: str, agent: str) -> tuple[dict[str, Any] | None, str]:
+        """Забрать конверт. Атомарно: второй претендент не получит."""
+        self.expire()
+        cur = self.conn.execute(
+            "UPDATE envelopes SET status='claimed', claimed_by=?, claimed_at=?"
+            " WHERE id=? AND status='queued'", (agent, time.time(), env_id))
+        self.conn.commit()
+        if cur.rowcount == 0:
+            row = self._row(env_id)
+            return None, f"конверт недоступен (status={row['status'] if row else 'нет такого'})"
+        self.event(env_id, "claimed", {"agent": agent})
+        self.conn.commit()
+        return self.get(env_id), "ok"
+
+    def complete(self, env_id: str, result: dict[str, Any], agent: str | None = None) -> bool:
+        self.conn.execute("UPDATE envelopes SET status='done', result=? WHERE id=?",
+                          (json.dumps(result, ensure_ascii=False, default=str), env_id))
+        self.event(env_id, "completed", {"agent": agent})
+        self.conn.commit()
+        return True
+
+    def get(self, env_id: str) -> dict[str, Any] | None:
+        row = self._row(env_id)
+        return self._to_env(row) if row else None
+
+    def set_routing(self, env_id: str, routing: dict[str, Any]) -> None:
+        self.conn.execute("UPDATE envelopes SET routing=?, recipient=COALESCE(NULLIF(?,''), recipient) WHERE id=?",
+                          (json.dumps(routing, ensure_ascii=False), routing.get("agent") or "", env_id))
+        self.event(env_id, "routed", routing)
+        self.conn.commit()
+
+    @staticmethod
+    def _to_env(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"], "created_at": row["created_at"], "ttl_s": row["ttl_s"],
+            "sender": row["sender"], "to": row["recipient"], "goal": row["goal"],
+            "task": row["task"], "capability": json.loads(row["capability"] or "[]"),
+            "token_budget": row["token_budget"], "context_query": row["context_query"] or "",
+            "cold_refs": json.loads(row["cold_refs"] or "[]"),
+            "mandate": json.loads(row["mandate"] or "{}") or None,
+            "price_usdc": row["price_usdc"], "status": row["status"],
+            "claimed_by": row["claimed_by"], "claimed_at": row["claimed_at"],
+            "result": json.loads(row["result"]) if row["result"] else None,
+            "signature": json.loads(row["signature"] or "{}"),
+            "routing": json.loads(row["routing"] or "{}"),
+        }
+
+    # ── факты (тёплый ярус) ───────────────────────────────────
+    def remember(self, text: str, tags: str = "", importance: int = 3,
+                 kind: str = "fact", source: str = "", session: str = "") -> int:
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("пустой факт не запоминается")
+        now = time.time()
+        cur = self.conn.execute(
+            "INSERT INTO facts(text, kind, tags, importance, source, session,"
+            " created_at, updated_at, status) VALUES(?,?,?,?,?,?,?,?,'active')",
+            (text, kind, tags.strip(), max(1, min(5, importance)), source, session, now, now))
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def supersede(self, old_id: int, new_text: str, **kw) -> int:
+        new_id = self.remember(new_text, **kw)
+        self.conn.execute("UPDATE facts SET status='superseded', superseded_by=?, updated_at=? WHERE id=?",
+                          (new_id, time.time(), old_id))
+        self.conn.commit()
+        return new_id
+
+    def link(self, src: int, relation: str, dst: int) -> None:
+        self.conn.execute("INSERT OR IGNORE INTO edges(src, relation, dst, created_at) VALUES(?,?,?,?)",
+                          (src, relation, dst, time.time()))
+        self.conn.commit()
+
+    def recall(self, query: str, k: int = 20) -> list[dict[str, Any]]:
+        if not query.strip():
+            return []
+        terms = [t for t in re.findall(r"[\wЀ-ӿ]+", query.lower()) if len(t) >= 3]
+        if not terms:
+            return []
+        where = " OR ".join(f"text LIKE ?" for _ in terms[:6])
+        rows = self.conn.execute(
+            f"SELECT * FROM facts WHERE status='active' AND ({where}) ORDER BY importance DESC, updated_at DESC LIMIT ?",
+            (*[f"%{t}%" for t in terms[:6]], k)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── холодный ярус ─────────────────────────────────────────
+    def put_cold(self, text: str) -> str:
+        self.cold_dir.mkdir(parents=True, exist_ok=True)
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        (self.cold_dir / f"{h}.txt").write_text(text, encoding="utf-8")
+        return "sha256:" + h
+
+    def get_cold(self, ref: str) -> str | None:
+        h = ref.split(":", 1)[-1]
+        p = self.cold_dir / f"{h}.txt"
+        return p.read_text(encoding="utf-8") if p.exists() else None
+
+    # ── сборка контекста под бюджет ──────────────────────────
+    def pack(self, env: dict[str, Any]) -> dict[str, Any]:
+        """Собрать контекст под жёсткий бюджет токенов конверта.
+
+        Возвращает текст, потраченные токены, источники и — обязательно —
+        список того, что не влезло. Молчаливого обрезания не бывает.
+        """
+        budget = int(env.get("token_budget") or 2000)
+        approx = max(1.0, float(budget))
+        used = 0.0
+        parts: list[str] = []
+        sources: list[str] = []
+        dropped: list[str] = []
+
+        hot = f"ЦЕЛЬ: {env.get('goal','')}\nЗАДАЧА: {env.get('task','')}"
+        cost = len(hot) / CHARS_PER_TOKEN
+        if cost <= approx:
+            parts.append(hot)
+            used += cost
+            sources.append("hot")
+        else:
+            dropped.append("hot: цель и задача не влезли в бюджет")
+
+        query = env.get("context_query") or ""
+        if query and used < approx:
+            for row in self.recall(query, k=50):
+                c = len(row["text"]) / CHARS_PER_TOKEN + 1
+                if used + c > approx:
+                    dropped.append(f"warm: факт {row['id']} не влез в бюджет")
+                    continue
+                parts.append(f"- {row['text']}")
+                used += c
+                sources.append("warm")
+            if "warm" not in sources:
+                dropped.append("warm: по запросу не найдено")
+
+        for ref in env.get("cold_refs") or []:
+            text = self.get_cold(ref)
+            if text is None:
+                dropped.append(f"cold:{ref}: артефакт не найден")
+                continue
+            c = len(text) / CHARS_PER_TOKEN + 1
+            if used + c > approx:
+                dropped.append(f"cold:{ref}: не влез в бюджет")
+                continue
+            parts.append(f"[{ref}] {text}")
+            used += c
+            sources.append("cold")
+
+        return {"text": "\n\n".join(parts), "tokens": round(used), "budget": budget,
+                "sources": sources, "dropped": dropped}
+
+    # ── события (история) ─────────────────────────────────────
+    def event(self, env_id: str | None, kind: str, payload: dict[str, Any]) -> None:
+        self.conn.execute("INSERT INTO events(ts, envelope_id, kind, payload) VALUES(?,?,?,?)",
+                          (time.time(), env_id, kind, json.dumps(payload, ensure_ascii=False, default=str)))
+
+    def history(self, env_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT ts, kind, payload FROM events WHERE envelope_id=? ORDER BY ts",
+                                 (env_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def stats(self) -> dict[str, Any]:
+        by_status = {r["status"]: r["c"] for r in self.conn.execute(
+            "SELECT status, COUNT(*) c FROM envelopes GROUP BY status").fetchall()}
+        facts = self.conn.execute("SELECT COUNT(*) c FROM facts WHERE status='active'").fetchone()["c"]
+        edges = self.conn.execute("SELECT COUNT(*) c FROM edges").fetchone()["c"]
+        cold = len(list(self.cold_dir.glob("*.txt"))) if self.cold_dir.exists() else 0
+        return {"envelopes": sum(by_status.values()), "by_status": by_status,
+                "facts": facts, "edges": edges, "cold": cold,
+                "db_bytes": self.path.stat().st_size if self.path.exists() else 0}

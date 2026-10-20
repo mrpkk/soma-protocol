@@ -1,0 +1,56 @@
+{
+  "name": "mitra-hub",
+  "description": "Mitra — протокол доверия, памяти и расчёта между агентами: конверт с бюджетом, мандатом и подписью; память в три яруса; отказ всегда с причиной.",
+  "url": "https://github.com/mrpkk/mitra-hub",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "Mitra",
+    "url": "https://github.com/mrpkk/mitra-hub"
+  },
+  "protocol": "mitra/1",
+  "capabilities": [
+    "send",
+    "route",
+    "verify",
+    "remember",
+    "anchor"
+  ],
+  "skills": [
+    {
+      "id": "send",
+      "name": "Отправить конверт агенту",
+      "description": "Конверт с целью, задачей, бюджетом токенов, мандатом и подписью."
+    },
+    {
+      "id": "route",
+      "name": "Подобрать исполнителя",
+      "description": "Выбор агента по capability, мандату и цене; отказ с причиной."
+    },
+    {
+      "id": "verify",
+      "name": "Проверить подпись конверта",
+      "description": "Ed25519, проверка офлайн без секрета."
+    },
+    {
+      "id": "remember",
+      "name": "Запомнить факт",
+      "description": "Тёплый ярус: факты с версиями и связями."
+    },
+    {
+      "id": "anchor",
+      "name": "Закрепить запись в истории",
+      "description": "Append-only цепочка хешей."
+    }
+  ],
+  "endpoints": {
+    "http": {
+      "url": "http://127.0.0.1:8765",
+      "mcp": "http://127.0.0.1:8765/mcp"
+    }
+  },
+  "pricing": {
+    "unit": "usdc",
+    "per_call": 0.005,
+    "note": "микроцены; см. PROTOCOL.md"
+  }
+}

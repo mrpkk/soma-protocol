@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mitra.dev/schemas/envelope-1.0.json",
+  "title": "Mitra envelope",
+  "type": "object",
+  "required": [
+    "goal",
+    "task",
+    "id",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 64
+    },
+    "created_at": {
+      "type": "number"
+    },
+    "ttl_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "task": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "sender": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "token_budget": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "context_query": {
+      "type": "string"
+    },
+    "cold_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "mandate": {
+      "type": "object",
+      "properties": {
+        "max_cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "allowed_payees": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expires_at": {
+          "type": "number"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "price_usdc": {
+      "type": "number",
+      "minimum": 0
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "claimed",
+        "done",
+        "expired",
+        "declined"
+      ]
+    },
+    "signature": {
+      "type": "object"
+    },
+    "routing": {
+      "type": "object"
+    },
+    "result": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  }
+}

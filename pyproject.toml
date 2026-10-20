@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mitra-hub"
+version = "1.0.0"
+description = "Mitra — протокол доверия, памяти и расчёта между агентами"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Mitra" }]
+keywords = ["agents", "protocol", "mcp", "a2a", "trust", "memory", "x402"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.optional-dependencies]
+sign = ["cryptography>=42"]          # Ed25519-подпись (без неё — HMAC-режим)
+schema = ["jsonschema>=4.20"]        # строгая проверка по схеме
+mcp = ["mcp>=2.0"]                   # MCP-адаптер
+dev = ["pytest>=8", "cryptography>=42", "jsonschema>=4.20"]
+
+[project.scripts]
+mitra = "mitra.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mrpkk/mitra-hub"
+Protocol = "https://github.com/mrpkk/mitra-hub/blob/main/PROTOCOL.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

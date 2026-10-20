@@ -1,0 +1,200 @@
+# Mitra protocol — `mitra/1`
+
+Status: **beta**. Version of the wire format is `mitra/1`; the field set below is frozen for it.
+JSON Schema: [`schemas/envelope.schema.json`](schemas/envelope.schema.json) (exported from the code —
+the code is the single source of truth).
+
+## 1. The envelope
+
+A message between agents is an **envelope**. It is the only thing agents exchange; memory,
+transport, money and history are carriers.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string | yes | unique message id (16 hex chars) |
+| `created_at` | number | yes | unix seconds, sender clock |
+| `ttl_s` | number | yes | lifetime in seconds; expired envelopes are never delivered |
+| `goal` | string | yes | *why* — readable without context |
+| `task` | string | yes | *what* — the work to be done |
+| `to` | string | no | recipient agent id, or `*` for broadcast |
+| `sender` | string | no | who sent it |
+| `capability[]` | string[] | no | capabilities required — the router's filter |
+| `token_budget` | integer | no | hard budget for the context that will be assembled |
+| `context_query` | string | no | what to retrieve from warm memory |
+| `cold_refs[]` | string[] | no | `sha256:` references to cold artifacts (hashes, not bodies) |
+| `mandate` | object | no | what the sender permits — checked before acting |
+| `price_usdc` | number | no | maximum the sender will pay for this message |
+| `status` | string | no | `queued` / `claimed` / `done` / `expired` / `declined` |
+| `signature` | object | no | signature over the canonical envelope |
+| `routing` | object | no | who was chosen and why |
+| `result` | object | no | the answer |
+
+Absent means *not specified*; `null` is never sent.
+
+### 1.1 Canonicalization and signing
+
+The signed payload is the envelope **minus** `signature`, `routing`, `result` and `status` —
+those change after the envelope is created. Canonical form is
+`json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))`.
+
+```
+signature = {
+  "algorithm": "ed25519",              # preferred: public key travels with the signature
+  "signature": "<base64>",
+  "public_key": "<base64>"
+}
+```
+
+Ed25519 is preferred because verification needs **no service and no secret** — the public key is
+in the envelope. If Ed25519 is unavailable, `hmac-sha256` is used and verification requires the
+shared secret. An unsigned envelope is reported as `algorithm: "none"` and must be treated as
+unverified.
+
+**Rule:** any change to a signed field invalidates the signature. That is the point.
+
+### 1.2 Mandate
+
+```
+"mandate": {
+  "max_cost_usd": 0.5,
+  "max_calls": 10,
+  "allowed_payees": ["alice"],
+  "expires_at": 1760000000,
+  "rules": ["amount", "payee", "calls", "validity_window"]
+}
+```
+
+Rules are evaluated in a **fixed order**, so a refusal names the most important reason rather
+than an incidental one:
+
+| # | rule | fires when |
+|---|---|---|
+| 1 | `validity_window` | the action happens after `expires_at` |
+| 2 | `amount` | the amount exceeds `max_cost_usd` |
+| 3 | `payee` | the payee is not in `allowed_payees` |
+| 4 | `calls` | the batch exceeds `max_calls` |
+
+A refusal is a string naming the rule: `amount: сумма 50.0 выше мандата 0.5`.
+Denial is the default: an unclassified action is refused, not allowed.
+
+The mandate interface is a plain function, so an external policy engine (OPA, Cedar) can be
+substituted without changing the protocol.
+
+### 1.3 Routing
+
+The router picks an executor from the registry:
+
+1. capability intersection — the agent must offer at least one required capability;
+2. mandate filter — `cost_per_call` must fit `max_cost_usd`;
+3. price ceiling — `cost_per_call` must fit `price_usdc`;
+4. of the survivors, the cheapest wins; ties break by name.
+
+If nobody survives, the answer is a refusal **with the reason per rejected agent** — a task is
+never dropped silently.
+
+## 2. Memory: three tiers, hard budget
+
+| Tier | Where | Rule |
+|---|---|---|
+| hot | envelope queue (SQLite) | goal and task are always in context; TTL cleans up |
+| warm | facts with versions and edges (SQLite + FTS5, trigram) | retrieved by query, selected under budget |
+| cold | artifacts addressed by `sha256` | fetched by hash, included only if it fits |
+
+Assembling context returns four things, and the fourth is not optional:
+
+```json
+{"text": "...", "tokens": 118, "budget": 2000,
+ "sources": ["hot", "warm", "cold"],
+ "dropped": ["warm: факт 42 не влез в бюджет", "cold:sha256:ab…: не найден"]}
+```
+
+**The context never grows; the store does.** That is the whole anti-degradation mechanism: the
+model is told what it does not have instead of being silently truncated.
+
+## 3. Transport
+
+The protocol is transport-agnostic. One envelope, many carriers.
+
+### 3.1 HTTP (reference implementation, standard library only)
+
+```
+GET  /healthz                 liveness + stats
+GET  /v1/agents               registry
+POST /v1/messages             send an envelope
+GET  /v1/inbox?agent=…        envelopes waiting for an agent
+POST /v1/claim                claim an envelope (exclusive)
+POST /v1/complete             close an envelope with a result
+POST /v1/route                choose an executor
+GET  /v1/envelopes/{id}       envelope + signature verdict + history
+```
+
+### 3.2 MCP
+
+An adapter exposes the same operations as MCP tools (`send`, `inbox`, `claim`, `complete`,
+`route`, `verify`, `stats`). MCP carries envelopes; it does not change their shape.
+
+### 3.3 A2A
+
+An A2A task is an envelope with `to` and `task`; the Agent Card format (`agents.json`) is used
+for discovery. A2A is the transport; the mandate and the signature are ours.
+
+### 3.4 x402
+
+The payment contract: a message may carry `price_usdc`. The carrier presents a signed payment
+receipt in the `X-PAYMENT` header; the receiver settles it through its own wallet.
+**The protocol fixes the contract, not the chain.** Settlement is a transport concern; a
+deployment chooses Base, Solana or another rail.
+
+## 4. Money: measured, not listed
+
+`Usage` meters what actually happened — `tokens`, `cpu_seconds`, `bytes_out`, `storage_writes`,
+`external_calls` — and turns it into a cost. There is no price list for "an agent call":
+a call that burns 30k tokens and 4 seconds of CPU is priced by that, not by a tier table.
+
+The reference rates live in `src/mitra/payments.py` and are configuration, not the market.
+
+## 5. History
+
+Every envelope leaves a trace: created, routed, claimed, completed. Records are hash-linked
+(`prev` + payload → `hash`), so the chain is append-only and verifiable offline. The anchor
+interface is deliberately small so that Arweave, IPFS or Nostr can take over publication while
+the local chain keeps working offline.
+
+## 6. Errors and refusals
+
+| Case | Response |
+|---|---|
+| invalid envelope | `{"ok": false, "error": "invalid_envelope", "details": [...]}` |
+| no executor | `{"agent": null, "reason": "...", "rejected": [...]}` |
+| mandate violated | `{"ok": false, "reason": "<rule>: <why>"}` |
+| already claimed | `{"ok": false, "reason": "конверт недоступен (status=claimed)"}` |
+| expired | not delivered; `status` becomes `expired` |
+| signature invalid | reported as unverified; the payload is **not** silently accepted |
+
+## 7. Conformance
+
+An implementation conforms when it passes `tests/test_conformance.py`:
+
+- C1 send returns an envelope id;
+- C2 envelopes are signed and verify;
+- C3 tampering invalidates the signature;
+- C4 the assembled context respects `token_budget`;
+- C5 degradation is declared (`dropped` present);
+- C6 expired envelopes are not delivered;
+- C7 claims are exclusive;
+- C8 routing refusals explain themselves;
+- C9 completion closes the envelope;
+- C10 budget and mandate travel with the envelope.
+
+Point the suite at your implementation:
+
+```bash
+MITRA_CONFORMANCE_IMPL="my_package.hub:MyHubFactory" pytest tests/test_conformance.py -v
+```
+
+## 8. Versioning
+
+`mitra/1` is a protocol identifier, not a marketing version. Breaking changes to the envelope
+get a new identifier (`mitra/2`). Additive fields keep the identifier and must be ignored by
+old readers — which is why the schema forbids `null` values: absence means "not specified",
+so a new field never breaks an old parser.
