@@ -25,6 +25,14 @@ another sender. The registry is that out-of-band channel: when an agent's `publi
 registered, verification compares the envelope's key with the registry and refuses a mismatch.
 Without a registry, treat the signature as integrity only.
 
+**Two signers, two meanings.** A signature carries `signer`:
+
+- `signer: "client"` — the sender signed it. The hub verifies the key against the registry;
+  this is the mode where origin is provable.
+- `signer: "hub"` — the hub signed it (the sender did not). This proves the hub handled the
+  envelope and that nothing changed since; origin is the hub, not the sender. Do not register
+  the hub's key under an agent's name: a client-signed envelope would then never match.
+
 Verifying needs the public key that travels with the signature — no service call, no secret.
 That is the reason Ed25519 is the default: a skeptic can check without trusting the hub.
 

@@ -24,8 +24,8 @@ POST /v1/messages
 pip install -e ".[dev]"
 mitra keygen                       # ключ подписи Ed25519
 mitra serve                        # хаб на http://127.0.0.1:8765
-mitra send --to researcher --goal "find the market" --task "scan 3 sources" --budget 2000
-mitra inbox --agent researcher
+mitra send --to research --goal "find the market" --task "scan 3 sources" --budget 2000
+mitra inbox --agent research
 ```
 
 Or in Python:
@@ -78,9 +78,10 @@ MITRA_CONFORMANCE_IMPL="my_package.hub:MyHubFactory" pytest tests/test_conforman
 
 A factory receives a temp directory and must return an object with
 `send`, `inbox`, `claim`, `complete`, `route`, `verify`, `stats`.
-Ten checks: signature verifies, tampering breaks it, budget is respected, degradation is
+Twelve checks: signature verifies, tampering breaks it, budget is respected, degradation is
 declared, expired envelopes are not delivered, claims are exclusive, refusals explain themselves,
-completion closes the envelope, and budget + mandate travel with the envelope.
+completion closes the envelope, budget + mandate travel with the envelope, a mandate refusal names
+a rule, and a repeated envelope id does not overwrite the original.
 
 ## Composing with what already exists
 

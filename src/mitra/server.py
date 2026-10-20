@@ -38,11 +38,24 @@ class Hub:
         self.registry = registry or Registry()
 
     # ── операции ──────────────────────────────────────────────
-    def send(self, env: Envelope, sign_it: bool = True) -> dict[str, Any]:
+    def send(self, env: Envelope, sign_it: bool = True,
+             client_signature: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Принять конверт.
+
+        Клиентская подпись принимается: тогда происхождение проверяется по
+        реестру. Если подписи нет — конверт подписывает хаб, и происхождение
+        отвечает хаб, а не отправителю.
+        """
         errors = _validate(env)
         if errors:
             return {"ok": False, "error": "invalid_envelope", "details": errors}
-        if sign_it:
+        if client_signature:
+            env.signature = dict(client_signature)
+            env.signature.setdefault("signer", "client")
+            ok, why = self.verify(env.to_dict())
+            if not ok:
+                return {"ok": False, "error": "bad_signature", "details": [why]}
+        elif sign_it:
             try:
                 sign(env)
             except RuntimeError as exc:
@@ -69,15 +82,22 @@ class Hub:
         return out
 
     def claim(self, env_id: str, agent: str) -> dict[str, Any]:
-        env, why = self.memory.claim(env_id, agent)
-        if env is None:
-            return {"ok": False, "reason": why}
-        # Подпись проверяется ДО выдачи работы: неподписанное или чужое — не отдаём.
+        """Забрать конверт.
+
+        Проверки идут ДО захвата: отказ не должен сжигать конверт —
+        легитимный исполнитель должен получить его потом.
+        """
+        env = self.memory.get(env_id)
+        if not env:
+            return {"ok": False, "reason": "нет такого конверта"}
+        if env.get("status") != "queued":
+            return {"ok": False, "reason": f"конверт недоступен (status={env.get('status')})"}
+        if env.get("to") not in (agent, "*"):
+            return {"ok": False, "reason": f"конверт адресован {env.get('to')}"}
         ok, sig_why = self.verify(env)
         if not ok:
             return {"ok": False, "reason": f"подпись не прошла: {sig_why}"}
-        # Мандат проверяется до выдачи: агент получает работу только в рамках.
-        mand = (env.get("mandate") or None)
+        mand = env.get("mandate") or None
         if mand:
             from .envelope import Mandate
             m = Mandate(**{k: v for k, v in mand.items()
@@ -86,7 +106,10 @@ class Hub:
                                               only=["payee", "calls", "validity_window"])
             if not allowed:
                 return {"ok": False, "reason": f"мандат отклонил выдачу: {rule_why}"}
-        return {"ok": True, "envelope": env, "context": self.memory.pack(env)}
+        claimed, why = self.memory.claim(env_id, agent)
+        if claimed is None:
+            return {"ok": False, "reason": why}
+        return {"ok": True, "envelope": claimed, "context": self.memory.pack(claimed)}
 
     def complete(self, env_id: str, result: dict[str, Any], agent: str | None = None) -> dict[str, Any]:
         """Закрыть конверт результатом. Фактическая стоимость сверяется с мандатом."""
@@ -192,8 +215,8 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/v1/messages":
             env = Envelope.from_dict({k: v for k, v in body.items()
                                       if k in Envelope.__dataclass_fields__})
-            # Подпись всегда ставит хаб: клиентская подпись не принимается.
-            self._send(200, self.hub.send(env, sign_it=True))
+            client_sig = body.get("signature") if isinstance(body.get("signature"), dict) else None
+            self._send(200, self.hub.send(env, sign_it=True, client_signature=client_sig))
         elif u.path == "/v1/claim":
             self._send(200, self.hub.claim(body.get("id", ""), body.get("agent", "")))
         elif u.path == "/v1/complete":

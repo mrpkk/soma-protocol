@@ -100,7 +100,8 @@ The router picks an executor from the registry:
 3. price ceiling — `cost_per_call` must fit `price_usdc`;
 4. of the survivors, the cheapest wins; ties break by name.
 
-4. the mandate's `allowed_payees` must contain the recipient.
+4. the mandate's `allowed_payees` must contain the recipient (broadcast `*` is not checked
+   against the payee list — the recipient is decided by whoever claims it).
 
 If nobody survives, the answer is a refusal **with the reason per rejected agent** — a task is
 never dropped silently.
@@ -214,6 +215,9 @@ An implementation conforms when it passes `tests/test_conformance.py`:
 - C10 budget and mandate travel with the envelope;
 - C11 a mandate refusal names a rule;
 - C12 a repeated envelope id does not overwrite the original.
+
+Routing never touches a signed field: the chosen executor is stored separately
+(`assigned_to`), so the signature stays valid after `route`.
 
 Point the suite at your implementation:
 

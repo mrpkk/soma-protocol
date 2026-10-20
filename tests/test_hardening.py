@@ -20,8 +20,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mitra.anchors import LocalChain  # noqa: E402
-from mitra.envelope import (Envelope, Mandate, check_mandate, generate_key,  # noqa: E402
-                            sign, validate)
+from mitra.envelope import (Envelope, Mandate, canonical, check_mandate,  # noqa: E402
+                            generate_key, sign, validate)
 from mitra.memory import Memory  # noqa: E402
 from mitra.payments import x402_header_ok  # noqa: E402
 from mitra.registry import Registry  # noqa: E402
@@ -135,21 +135,44 @@ def test_generate_key_does_not_overwrite(tmp_path):
 
 # ── ключи отправителей: происхождение, а не только целостность ──
 
-def test_signature_does_not_prove_origin_without_registry(key, tmp_path):
-    """Подпись чужим ключом проверяется как целостность, но не как авторство."""
+def _client_sign(env, private_bytes) -> None:
+    """Подписать конверт чужим ключом — как это сделал бы атакующий."""
     import base64
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    priv = Ed25519PrivateKey.from_private_bytes(private_bytes)
+    payload = canonical(env.payload())
+    env.signature = {
+        "algorithm": "ed25519",
+        "signature": base64.b64encode(priv.sign(payload)).decode(),
+        "public_key": base64.b64encode(priv.public_key().public_bytes_raw()).decode(),
+        "signer": "client",
+    }
+
+
+def test_client_signature_must_match_registered_key(key, tmp_path):
+    """Клиентская подпись чужим ключом — это подмена отправителя, и она отвергается."""
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     attacker = Ed25519PrivateKey.generate()
     env = Envelope(goal="g", task="t", sender="trusted-agent")
-    env.signature = {
-        "algorithm": "ed25519",
-        "signature": base64.b64encode(attacker.sign(b"x")).decode(),
-        "public_key": base64.b64encode(attacker.public_key().public_bytes_raw()).decode(),
-    }
+    _client_sign(env, attacker.private_bytes_raw())
     hub = Hub(Memory(path=tmp_path / "m.db", cold_dir=tmp_path / "cold"),
               Registry(agents={"trusted-agent": {"public_key": "другой-ключ"}}))
     ok, why = hub.verify(env.to_dict())
     assert not ok and "не совпадает" in why, why
+
+
+def test_client_signature_with_registered_key_is_accepted(key, tmp_path):
+    """Клиентская подпись зарегистрированным ключом — принимается."""
+    import base64
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    priv = Ed25519PrivateKey.generate()
+    pub = base64.b64encode(priv.public_key().public_bytes_raw()).decode()
+    env = Envelope(goal="g", task="t", sender="trusted-agent")
+    _client_sign(env, priv.private_bytes_raw())
+    hub = Hub(Memory(path=tmp_path / "m.db", cold_dir=tmp_path / "cold"),
+              Registry(agents={"trusted-agent": {"public_key": pub}}))
+    ok, why = hub.verify(env.to_dict())
+    assert ok, why
 
 
 # ── HTTP-транспорт: он вообще работает ────────────────────────

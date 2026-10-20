@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Protocol
@@ -29,6 +30,9 @@ class LocalChain:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else Path.home() / ".mitra" / "history.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Дописывание и поиск предыдущего хеша должны быть атомарны:
+        # иначе два потока возьмут один prev и разорвут цепочку.
+        self.lock = threading.Lock()
 
     def _last_hash(self) -> str:
         if not self.path.exists():
@@ -46,6 +50,10 @@ class LocalChain:
             return "0" * 64
 
     def append(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            return self._append(payload)
+
+    def _append(self, payload: dict[str, Any]) -> dict[str, Any]:
         prev = self._last_hash()
         body = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         h = hashlib.sha256((prev + body).encode("utf-8")).hexdigest()

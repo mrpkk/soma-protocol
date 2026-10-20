@@ -70,8 +70,9 @@ class MitraHarness:
         return self.hub.route(env_id)
 
     def verify(self, envelope: dict[str, Any]) -> tuple[bool, str]:
-        from mitra.envelope import Envelope, verify
-        return verify(Envelope.from_dict(envelope))
+        # Через хаб: так проверка идёт по реестру ключей (происхождение),
+        # а не только по целостности подписи.
+        return self.hub.verify(envelope)
 
     def stats(self) -> dict[str, Any]:
         return self.hub.memory.stats()

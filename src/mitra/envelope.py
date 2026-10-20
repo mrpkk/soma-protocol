@@ -162,6 +162,7 @@ def sign(envelope: Envelope, key: bytes | None = None) -> Envelope:
             "algorithm": "ed25519",
             "signature": base64.b64encode(sig).decode(),
             "public_key": base64.b64encode(pub).decode(),
+            "signer": "hub",
         }
         return envelope
     secret = os.environ.get("MITRA_SECRET")
@@ -171,7 +172,7 @@ def sign(envelope: Envelope, key: bytes | None = None) -> Envelope:
         raise RuntimeError(
             "нечем подписать: нет ключа Ed25519 (MITRA_SIGNING_KEY) и нет MITRA_SECRET")
     mac = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-    envelope.signature = {"algorithm": "hmac-sha256", "signature": mac}
+    envelope.signature = {"algorithm": "hmac-sha256", "signature": mac, "signer": "hub"}
     return envelope
 
 
@@ -196,7 +197,8 @@ def verify(envelope: Envelope, secret: bytes | None = None,
         ok = hmac.compare_digest(expect, sig.get("signature", ""))
         return ok, "ok" if ok else "подпись не сошлась"
     if algo == "ed25519":
-        if expected_public_key and sig.get("public_key") != expected_public_key:
+        if expected_public_key and sig.get("signer") == "client" \
+            and sig.get("public_key") != expected_public_key:
             return False, "ключ не совпадает с ключом отправителя из реестра"
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (

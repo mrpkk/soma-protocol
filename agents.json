@@ -10,12 +10,10 @@
   "protocol": "mitra/1",
   "capabilities": [
     "send",
-    "route",
-    "verify",
-    "remember",
-    "anchor",
     "claim",
-    "complete"
+    "complete",
+    "route",
+    "verify"
   ],
   "skills": [
     {
@@ -42,16 +40,6 @@
       "id": "verify",
       "name": "Проверить подпись конверта",
       "description": "Ed25519 офлайн; при наличии реестра ключей — проверяется и происхождение."
-    },
-    {
-      "id": "remember",
-      "name": "Запомнить факт",
-      "description": "Тёплый ярус памяти: факты с версиями и связями."
-    },
-    {
-      "id": "anchor",
-      "name": "Закрепить запись в истории",
-      "description": "Хеш-цепочка событий; внешний якорь (Arweave/IPFS) — адаптер."
     }
   ],
   "endpoints": {
