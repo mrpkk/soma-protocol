@@ -116,11 +116,10 @@ class Envelope:
 
 def _ed25519_key() -> bytes | None:
     path = os.environ.get("MITRA_SIGNING_KEY")
-    if path and os.path.exists(path):
-        return open(path, "rb").read()
-    default = os.path.expanduser("~/.local/share/mitra/signing.key")
-    if os.path.exists(default):
-        return open(default, "rb").read()
+    for candidate in (path, os.path.expanduser("~/.local/share/mitra/signing.key")):
+        if candidate and os.path.exists(candidate):
+            with open(candidate, "rb") as f:
+                return f.read()
     return None
 
 
@@ -132,10 +131,14 @@ def generate_key(path: str | Path | None = None) -> dict[str, str]:
     target = Path(path or os.environ.get(
         "MITRA_SIGNING_KEY", Path.home() / ".local" / "share" / "mitra" / "signing.key"))
     target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        raise FileExistsError(f"ключ уже есть: {target} (старые подписи перестанут проверяться)")
     priv = Ed25519PrivateKey.generate()
     raw = priv.private_bytes_raw()
-    target.write_bytes(raw)
-    os.chmod(target, 0o600)
+    # O_EXCL + 0600: файл создаётся сразу с правильными правами, без окна 0644.
+    fd = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(raw)
     return {"private_key_path": str(target),
             "public_key": base64.b64encode(priv.public_key().public_bytes_raw()).decode()}
 
@@ -147,11 +150,12 @@ def sign(envelope: Envelope, key: bytes | None = None) -> Envelope:
     который тоже можно проверить, но нужен общий секрет.
     """
     payload = canonical(envelope.payload())
-    try:
+    priv_bytes = key or _ed25519_key()
+    if priv_bytes is not None:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import (
             Ed25519PrivateKey,
         )
-        priv = Ed25519PrivateKey.from_private_bytes(key or _ed25519_key())
+        priv = Ed25519PrivateKey.from_private_bytes(priv_bytes)
         sig = priv.sign(payload)
         pub = priv.public_key().public_bytes_raw()
         envelope.signature = {
@@ -160,18 +164,25 @@ def sign(envelope: Envelope, key: bytes | None = None) -> Envelope:
             "public_key": base64.b64encode(pub).decode(),
         }
         return envelope
-    except Exception:
-        secret = key or (os.environ.get("MITRA_SECRET") or "").encode()
-        if not secret:
-            envelope.signature = {"algorithm": "none"}
-            return envelope
-        mac = hmac.new(secret, payload, hashlib.sha256).hexdigest()
-        envelope.signature = {"algorithm": "hmac-sha256", "signature": mac}
-        return envelope
+    secret = os.environ.get("MITRA_SECRET")
+    if not secret:
+        # Молча подписывать «ничем» нельзя: это выглядит как подпись, а значит —
+        # как доверие. Явная ошибка лучше тишины.
+        raise RuntimeError(
+            "нечем подписать: нет ключа Ed25519 (MITRA_SIGNING_KEY) и нет MITRA_SECRET")
+    mac = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    envelope.signature = {"algorithm": "hmac-sha256", "signature": mac}
+    return envelope
 
 
-def verify(envelope: Envelope, secret: bytes | None = None) -> tuple[bool, str]:
-    """Проверить подпись конверта. Возвращает (ok, причина)."""
+def verify(envelope: Envelope, secret: bytes | None = None,
+           expected_public_key: str | None = None) -> tuple[bool, str]:
+    """Проверить подпись конверта. Возвращает (ok, причина).
+
+    `expected_public_key` — ключ из реестра агентов. С ним проверка доказывает
+    **происхождение**: без него доказывается только целостность, потому что
+    публичный ключ едет в самом конверте.
+    """
     sig = envelope.signature or {}
     algo = sig.get("algorithm")
     if not algo or algo == "none":
@@ -185,6 +196,8 @@ def verify(envelope: Envelope, secret: bytes | None = None) -> tuple[bool, str]:
         ok = hmac.compare_digest(expect, sig.get("signature", ""))
         return ok, "ok" if ok else "подпись не сошлась"
     if algo == "ed25519":
+        if expected_public_key and sig.get("public_key") != expected_public_key:
+            return False, "ключ не совпадает с ключом отправителя из реестра"
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (
                 Ed25519PublicKey,
@@ -205,24 +218,54 @@ def verify(envelope: Envelope, secret: bytes | None = None) -> tuple[bool, str]:
 RULES: list[tuple[str, Callable[[dict, Mandate], str | None]]] = [
     ("validity_window", lambda a, m: None if (m.expires_at is None or a.get("at", time.time()) <= m.expires_at)
      else "срок мандата истёк"),
-    ("amount", lambda a, m: None if (m.max_cost_usd is None or float(a.get("amount", 0)) <= m.max_cost_usd)
-     else f"сумма {a.get('amount')} выше мандата {m.max_cost_usd}"),
-    ("payee", lambda a, m: None if (not m.allowed_payees or a.get("payee") in m.allowed_payees)
-     else f"получатель {a.get('payee')} не в списке разрешённых"),
-    ("calls", lambda a, m: None if (m.max_calls is None or int(a.get("calls", 1)) <= m.max_calls)
-     else f"число вызовов {a.get('calls')} выше мандата {m.max_calls}"),
+    ("amount", lambda a, m: None if m.max_cost_usd is None else (
+         None if "amount" in a and _num(a["amount"]) <= m.max_cost_usd
+         else (f"в действии нет суммы" if "amount" not in a
+               else f"сумма {a['amount']} выше мандата {m.max_cost_usd}"))),
+    ("payee", lambda a, m: None if not m.allowed_payees else (
+         None if "payee" in a and a["payee"] in m.allowed_payees
+         else ("в действии нет получателя" if "payee" not in a
+               else f"получатель {a.get('payee')} не в списке разрешённых"))),
+    ("calls", lambda a, m: None if m.max_calls is None else (
+         None if "calls" in a and _num(a["calls"]) <= m.max_calls
+         else ("в действии нет числа вызовов" if "calls" not in a
+               else f"число вызовов {a.get('calls')} выше мандата {m.max_calls}"))),
 ]
 
 
-def check_mandate(action: dict[str, Any], mandate: Mandate | None) -> tuple[bool, str]:
-    """Проверить действие против мандата. Отказ — всегда с именем правила."""
+def _num(value: Any) -> float:
+    """Число или исключение: нечисловое значение — это ошибка, а не ноль."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"значение не число: {value!r}")
+
+
+def check_mandate(action: dict[str, Any], mandate: Mandate | None,
+                  only: list[str] | None = None) -> tuple[bool, str]:
+    """Проверить действие против мандата. Отказ — всегда с именем правила.
+
+    Отказ по умолчанию: неизвестное имя правила, отсутствующее поле при
+    включённом правиле и нечисловое значение — это отказ, а не «разрешено».
+    """
     if mandate is None:
         return True, "ok"
-    enabled = set(mandate.rules) if mandate.rules else {r[0] for r in RULES}
+    known = {r[0] for r in RULES}
+    unknown = set(mandate.rules or []) - known
+    if unknown:
+        return False, f"unknown_rule: {sorted(unknown)}"
+    enabled = set(mandate.rules) if mandate.rules else known
+    if only is not None:
+        # Проверяем только указанные правила: «сумма» относится к оплате,
+        # а не к выдаче работы, и не должна блокировать её.
+        enabled &= set(only)
     for rule_id, fn in RULES:
         if rule_id not in enabled:
             continue
-        reason = fn(action, mandate)
+        try:
+            reason = fn(action, mandate)
+        except ValueError as exc:
+            return False, f"{rule_id}: {exc}"
         if reason:
             return False, f"{rule_id}: {reason}"
     return True, "ok"
@@ -243,7 +286,7 @@ def route(envelope: Envelope, registry: dict[str, Any]) -> dict[str, Any]:
     for name, spec in (registry or {}).items():
         agent_caps = set(spec.get("capabilities") or [])
         if caps and not (caps & agent_caps):
-            rejected.append(f"{name}: нет capability {sorted(caps & agent_caps)}")
+            rejected.append(f"{name}: не умеет {sorted(caps)} (умеет {sorted(agent_caps)})")
             continue
         cost = float(spec.get("cost_per_call", 0) or 0)
         if mand and mand.max_cost_usd is not None and cost > mand.max_cost_usd:
@@ -251,6 +294,9 @@ def route(envelope: Envelope, registry: dict[str, Any]) -> dict[str, Any]:
             continue
         if envelope.price_usdc is not None and cost > float(envelope.price_usdc):
             rejected.append(f"{name}: цена {cost} выше price_usdc {envelope.price_usdc}")
+            continue
+        if mand and mand.allowed_payees and envelope.to not in mand.allowed_payees and envelope.to != "*":
+            rejected.append(f"{name}: получатель {envelope.to} не разрешён мандатом")
             continue
         cands.append((cost, name, spec))
     if not cands:
@@ -316,12 +362,37 @@ def validate(envelope: Envelope) -> list[str]:
                         key=lambda e: e.path)
         return [f"{'/'.join(str(p) for p in e.path) or '<root>'}: {e.message}" for e in errors]
     except ImportError:
+        # jsonschema не установлен — проверяем сами, строго: типы, границы, enum.
         errors: list[str] = []
         for field in _ENVELOPE_SCHEMA["required"]:
             if not d.get(field):
                 errors.append(f"{field}: обязательное поле")
-        if d.get("token_budget", 0) < 1:
-            errors.append("token_budget: должен быть >= 1")
-        if d.get("status") not in _ENVELOPE_SCHEMA["properties"]["status"]["enum"]:
+        for field, typ in (("goal", str), ("task", str), ("sender", str), ("to", str),
+                           ("context_query", str), ("id", str)):
+            if field in d and not isinstance(d[field], typ):
+                errors.append(f"{field}: должен быть {typ.__name__}")
+        for field in ("created_at", "ttl_s"):
+            if field in d and not isinstance(d[field], (int, float)) or isinstance(d.get(field), bool):
+                errors.append(f"{field}: должен быть числом")
+        if "ttl_s" in d and isinstance(d["ttl_s"], (int, float)) and d["ttl_s"] <= 0:
+            errors.append("ttl_s: должен быть > 0")
+        if "token_budget" in d:
+            if not isinstance(d["token_budget"], int) or isinstance(d["token_budget"], bool):
+                errors.append("token_budget: должен быть целым")
+            elif d["token_budget"] < 1:
+                errors.append("token_budget: должен быть >= 1")
+        if "capability" in d:
+            if not isinstance(d["capability"], list) or \
+                    any(not isinstance(x, str) for x in d["capability"]):
+                errors.append("capability: должен быть списком строк")
+        if "cold_refs" in d and (not isinstance(d["cold_refs"], list) or
+                                 any(not isinstance(x, str) for x in d["cold_refs"])):
+            errors.append("cold_refs: должен быть списком строк")
+        if "price_usdc" in d and (not isinstance(d["price_usdc"], (int, float)) or
+                                  isinstance(d["price_usdc"], bool)):
+            errors.append("price_usdc: должен быть числом")
+        if "status" in d and d["status"] not in _ENVELOPE_SCHEMA["properties"]["status"]["enum"]:
             errors.append("status: неизвестное значение")
+        if "mandate" in d and not isinstance(d["mandate"], dict):
+            errors.append("mandate: должен быть объектом")
         return errors

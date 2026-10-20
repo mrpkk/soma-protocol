@@ -111,17 +111,23 @@ def test_c2_envelope_is_signed_and_verifies(impl):
 
 
 def test_c3_tampering_breaks_the_signature(impl):
+    """Подмена ломает подпись — но только если конверт вообще был подписан."""
     impl.send(goal="g", task="t", to="research")
     env = dict(impl.inbox("research")[0]["envelope"])
+    signed = env.get("signature") or {}
+    assert signed.get("algorithm") not in (None, "", "none"), \
+        "тест бессмысленен для неподписанного конверта"
     env["task"] = env["task"] + " (подменено)"
     ok, _ = impl.verify(env)
     assert not ok, "подпись должна ломаться при подмене"
 
 
 def test_c4_context_respects_the_declared_budget(impl):
+    """Бюджет соблюдается, и контекст не пуст: иначе проверка проходит вхолостую."""
     impl.send(goal="g", task="t", to="research", token_budget=100, context_query="бюджет")
     ctx = impl.inbox("research")[0]["context"]
     assert ctx["tokens"] <= ctx["budget"], ctx
+    assert ctx.get("text"), "пустой контекст не считается соблюдением бюджета"
 
 
 def test_c5_degradation_is_declared(impl):
@@ -132,9 +138,13 @@ def test_c5_degradation_is_declared(impl):
 
 
 def test_c6_expired_envelope_is_not_delivered(impl):
+    """Просроченное не выдаётся, а живое — выдаётся (иначе тест проходит вхолостую)."""
     impl.send(goal="g", task="t", to="research", ttl_s=0.01)
     time.sleep(0.05)
     assert not [i for i in impl.inbox("research") if i["envelope"]["status"] != "expired"]
+    live = impl.send(goal="g2", task="t2", to="research")
+    assert live.get("id"), live
+    assert impl.inbox("research"), "живой конверт должен доставляться"
 
 
 def test_c7_claim_is_exclusive(impl):
@@ -146,12 +156,12 @@ def test_c7_claim_is_exclusive(impl):
 
 
 def test_c8_route_refusal_is_explained(impl):
+    """Отказ обязан объясняться, и список отклонённых — тоже."""
     res = impl.send(goal="g", task="t", to="research", capability=["несуществующая-способность"])
     decision = impl.route(res["id"])
+    assert decision.get("reason"), "решение обязано объясняться"
     if decision.get("agent") is None:
-        assert decision.get("reason"), "отказ обязан объясняться"
-    else:
-        assert decision.get("reason"), "и выбор обязан объясняться"
+        assert decision.get("rejected") is not None, "отказ обязан называть причины по агентам"
 
 
 def test_c9_completion_closes_the_envelope(impl):
@@ -159,6 +169,22 @@ def test_c9_completion_closes_the_envelope(impl):
     assert impl.complete(res["id"], {"text": "готово"}, "research").get("ok") is True
     stats = impl.stats()
     assert stats.get("by_status", {}).get("done", 0) >= 1, stats
+
+
+def test_c11_mandate_refusal_names_a_rule(impl):
+    """Отказ по мандату — с именем правила, а не булевым флагом."""
+    from mitra.envelope import Mandate, check_mandate
+    ok, why = check_mandate({"amount": 999999}, Mandate(max_cost_usd=1.0))
+    assert not ok and ":" in why, why
+
+
+def test_c12_duplicate_envelope_id_is_not_overwritten(impl):
+    """Повторная отправка с тем же id не должна затереть чужой конверт."""
+    first = impl.send(goal="g", task="t", to="research")
+    again = impl.send(goal="g2", task="t2", to="research", id=first["id"])
+    if again.get("ok"):
+        env = impl.inbox("research")[0]["envelope"]
+        assert env["goal"] == "g", "исходный конверт перезаписан"
 
 
 def test_c10_budget_and_mandate_travel_with_the_envelope(impl):

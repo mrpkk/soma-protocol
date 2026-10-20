@@ -12,9 +12,18 @@ separators=(",", ":"))`. Any change to a signed field invalidates the signature.
 
 ## What the signature buys
 
-Proof of **origin and integrity**, not of truth. A valid signature means: this envelope was
-created by the holder of that key and has not been altered since. It does not mean the task is
-sensible, that the sender is honest, or that the artifact it describes is good.
+Proof of **integrity** always, and proof of **origin** only when the sender's key is known
+independently.
+
+A valid signature means: this envelope was created by the holder of that key and has not been
+altered since. It does not mean the task is sensible, that the sender is honest, or that the
+artifact it describes is good.
+
+**Origin requires an out-of-band key.** The public key travels inside the envelope, so on its
+own it proves nothing about *who* sent it — anyone can sign with their own key and claim
+another sender. The registry is that out-of-band channel: when an agent's `public_key` is
+registered, verification compares the envelope's key with the registry and refuses a mismatch.
+Without a registry, treat the signature as integrity only.
 
 Verifying needs the public key that travels with the signature — no service call, no secret.
 That is the reason Ed25519 is the default: a skeptic can check without trusting the hub.
@@ -26,7 +35,7 @@ That is the reason Ed25519 is the default: a skeptic can check without trusting 
 | sender → hub | envelope | signature; size and schema limits |
 | hub → executor | envelope + assembled context | budget; context is budgeted, cold refs are hashes |
 | executor → third party | result | the executor's own mandate; the hub does not execute actions |
-| hub → history | events | hash-linked append-only chain |
+| hub → history | events | hash-linked append-only chain (финальность записи — только внешним якорем) |
 
 ## What the hub will not do
 
@@ -40,11 +49,13 @@ That is the reason Ed25519 is the default: a skeptic can check without trusting 
 
 - Put the HTTP transport behind a reverse proxy with TLS and authentication. The reference
   implementation binds `127.0.0.1` by default and has **no authentication** — it is meant to
-  sit behind your own gateway.
+  sit behind your own gateway. Bodies are capped at 1 MiB; add rate limiting yourself.
 - Keep the signing key out of the repository and out of images. `MITRA_SIGNING_KEY` points to
   the key file; the file is created with mode 0600.
 - Rate-limit inbound envelopes at the gateway. The protocol has no built-in spam control; a
   public deployment must add its own (token, quota, or proof-of-work).
+- Register agent public keys in the registry if you need origin to be provable, and keep the
+  registry write-protected.
 - Memory is local. If a deployment federates nodes, encrypt the warm tier at rest and keep the
   private key separate from the data.
 

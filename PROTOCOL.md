@@ -75,7 +75,18 @@ than an incidental one:
 | 4 | `calls` | the batch exceeds `max_calls` |
 
 A refusal is a string naming the rule: `amount: сумма 50.0 выше мандата 0.5`.
-Denial is the default: an unclassified action is refused, not allowed.
+
+**Denial is the default.** Three cases are refusals, not permissions:
+
+- an **unknown rule name** (`rules: ["typo"]`) → `unknown_rule: [...]`; a typo must not
+  silently disable every check;
+- an **enabled rule without its field** → the field is missing, so the check cannot pass;
+- a **non-numeric value** → refused, not treated as zero.
+
+A rule can be checked separately, because the rules concern different moments:
+`payee`, `calls` and `validity_window` govern **delivery** of the work, `amount` governs
+**payment**. A delivery is not blocked by a missing amount; a payment is not blocked by an
+unrelated payee rule.
 
 The mandate interface is a plain function, so an external policy engine (OPA, Cedar) can be
 substituted without changing the protocol.
@@ -89,6 +100,8 @@ The router picks an executor from the registry:
 3. price ceiling — `cost_per_call` must fit `price_usdc`;
 4. of the survivors, the cheapest wins; ties break by name.
 
+4. the mandate's `allowed_payees` must contain the recipient.
+
 If nobody survives, the answer is a refusal **with the reason per rejected agent** — a task is
 never dropped silently.
 
@@ -96,7 +109,7 @@ never dropped silently.
 
 | Tier | Where | Rule |
 |---|---|---|
-| hot | envelope queue (SQLite) | goal and task are always in context; TTL cleans up |
+| hot | envelope queue (SQLite) | goal and task are **always** in context — the one deliberate budget overrun; TTL cleans up |
 | warm | facts with versions and edges (SQLite + FTS5, trigram) | retrieved by query, selected under budget |
 | cold | artifacts addressed by `sha256` | fetched by hash, included only if it fits |
 
@@ -128,6 +141,10 @@ POST /v1/route                choose an executor
 GET  /v1/envelopes/{id}       envelope + signature verdict + history
 ```
 
+The reference transport has **no authentication** and binds `127.0.0.1`. It is a component to
+put behind your own gateway; a public deployment must add authentication, a body-size limit
+(the reference caps bodies at 1 MiB) and rate limiting.
+
 ### 3.2 MCP
 
 An adapter exposes the same operations as MCP tools (`send`, `inbox`, `claim`, `complete`,
@@ -140,8 +157,10 @@ for discovery. A2A is the transport; the mandate and the signature are ours.
 
 ### 3.4 x402
 
-The payment contract: a message may carry `price_usdc`. The carrier presents a signed payment
-receipt in the `X-PAYMENT` header; the receiver settles it through its own wallet.
+The payment contract: a message may carry `price_usdc`. The carrier presents a payment receipt
+in the `X-PAYMENT` header; the receiver settles it through its own wallet. The receipt must be
+JSON and carry an `amount` not below the requested one — a receipt without an amount, or below
+the amount, is refused. Signature and chain settlement are the transport's job.
 **The protocol fixes the contract, not the chain.** Settlement is a transport concern; a
 deployment chooses Base, Solana or another rail.
 
@@ -156,15 +175,23 @@ The reference rates live in `src/mitra/payments.py` and are configuration, not t
 ## 5. History
 
 Every envelope leaves a trace: created, routed, claimed, completed. Records are hash-linked
-(`prev` + payload → `hash`), so the chain is append-only and verifiable offline. The anchor
-interface is deliberately small so that Arweave, IPFS or Nostr can take over publication while
-the local chain keeps working offline.
+(`prev` + payload → `hash`), so the chain is append-only and verifiable offline — and a tampered
+middle record breaks the link to the next one. The anchor interface is deliberately small so
+that Arweave, IPFS or Nostr can take over publication while the local chain keeps working
+offline.
+
+**Honest limit:** the last record of a local chain can always be recomputed, so the chain alone
+does not prove that the newest entry was never altered — it needs an external anchor (Arweave,
+IPFS, a notary) for that. Until then the chain proves ordering and continuity, not finality.
 
 ## 6. Errors and refusals
 
 | Case | Response |
 |---|---|
 | invalid envelope | `{"ok": false, "error": "invalid_envelope", "details": [...]}` |
+| cannot sign | `{"ok": false, "error": "cannot_sign", "details": ["нечем подписать: ..."]}` |
+| duplicate id | `{"ok": false, "error": "duplicate_id", "details": [...]}` |
+| bad body | `{"error": "bad_request", "details": [...]}` (400) |
 | no executor | `{"agent": null, "reason": "...", "rejected": [...]}` |
 | mandate violated | `{"ok": false, "reason": "<rule>: <why>"}` |
 | already claimed | `{"ok": false, "reason": "конверт недоступен (status=claimed)"}` |
@@ -184,7 +211,9 @@ An implementation conforms when it passes `tests/test_conformance.py`:
 - C7 claims are exclusive;
 - C8 routing refusals explain themselves;
 - C9 completion closes the envelope;
-- C10 budget and mandate travel with the envelope.
+- C10 budget and mandate travel with the envelope;
+- C11 a mandate refusal names a rule;
+- C12 a repeated envelope id does not overwrite the original.
 
 Point the suite at your implementation:
 

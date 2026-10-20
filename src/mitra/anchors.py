@@ -61,6 +61,20 @@ class LocalChain:
         h = hashlib.sha256((prev + body).encode("utf-8")).hexdigest()
         return h == record.get("hash")
 
+    def verify_chain(self) -> tuple[bool, str]:
+        """Проверить связь цепочкой: каждая запись ссылается на хеш предыдущей.
+
+        Проверка одной записи не ловит подмену «в середине»: пересчитанный хеш
+        проходит, если не смотреть связь. Поэтому нужна проверка цепочки.
+        """
+        recs = self.records()
+        for i, rec in enumerate(recs):
+            if not self.verify(rec):
+                return False, f"запись {i}: хеш не сходится"
+            if i and rec.get("prev") != recs[i - 1].get("hash"):
+                return False, f"запись {i}: разрыв цепочки"
+        return True, "цепочка цела"
+
     def records(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []

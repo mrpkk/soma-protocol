@@ -16,7 +16,9 @@ import hashlib
 import json
 import os
 import re
+import re
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -66,21 +68,30 @@ END;
 class Memory:
     """Одно хранилище: очередь + факты + холодные артефакты."""
 
-    def __init__(self, path: str | Path | None = None, cold_dir: str | Path | None = None):
+    def __init__(self, path: str | Path | None = None, cold_dir: str | Path | None = None,
+                 chain: Any | None = None):
         self.path = Path(path or os.environ.get("MITRA_DB", Path.home() / ".mitra" / "mitra.db"))
         self.cold_dir = Path(cold_dir or os.environ.get("MITRA_COLD", Path.home() / ".mitra" / "cold"))
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.path))
+        # HTTP-сервер многопоточный: соединение общее, доступ под локом.
+        self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        self.lock = threading.RLock()
+        from .anchors import LocalChain
+        self.chain = chain if chain is not None else LocalChain(
+            os.environ.get("MITRA_HISTORY", str(self.path.parent / "history.jsonl")))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.executescript(FTS_TRIGGERS)
         self.conn.commit()
 
     # ── очередь ───────────────────────────────────────────────
-    def put(self, env: Any) -> None:
+    def put(self, env: Any) -> bool:
+        """Положить конверт в очередь. Существующий id не переигрывается."""
         d = env.to_dict()
-        self.conn.execute(
-            "INSERT OR REPLACE INTO envelopes(id, created_at, ttl_s, sender, recipient,"
+        d["status"] = "queued"   # статус определяет хаб, не отправитель
+        try:
+            self.conn.execute(
+                "INSERT INTO envelopes(id, created_at, ttl_s, sender, recipient,"
             " goal, task, capability, token_budget, context_query, cold_refs, mandate,"
             " price_usdc, status, claimed_by, claimed_at, result, signature, routing)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -89,9 +100,13 @@ class Memory:
              d.get("context_query", ""), json.dumps(d.get("cold_refs", [])),
              json.dumps(d.get("mandate") or {}), d.get("price_usdc"), d.get("status", "queued"),
              None, None, json.dumps(d.get("result")) if d.get("result") else None,
-             json.dumps(d.get("signature", {})), json.dumps(d.get("routing", {}))))
-        self.event(d["id"], "put", {"to": d.get("recipient")})
+                 json.dumps(d.get("signature", {})), json.dumps(d.get("routing", {}))))
+        except sqlite3.IntegrityError:
+            self.conn.rollback()
+            return False
+        self.event(d["id"], "put", {"to": d.get("to")})
         self.conn.commit()
+        return True
 
     def _row(self, env_id: str) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM envelopes WHERE id=?", (env_id,)).fetchone()
@@ -114,12 +129,24 @@ class Memory:
         return [self._to_env(r) for r in rows]
 
     def claim(self, env_id: str, agent: str) -> tuple[dict[str, Any] | None, str]:
-        """Забрать конверт. Атомарно: второй претендент не получит."""
-        self.expire()
-        cur = self.conn.execute(
-            "UPDATE envelopes SET status='claimed', claimed_by=?, claimed_at=?"
-            " WHERE id=? AND status='queued'", (agent, time.time(), env_id))
-        self.conn.commit()
+        """Забрать конверт. Атомарно: второй претендент не получит.
+
+        Забрать может только адресат (или broadcast) — иначе это кража работы.
+        """
+        with self.lock:
+            self.expire()
+            cur = self.conn.execute(
+                "UPDATE envelopes SET status='claimed', claimed_by=?, claimed_at=?"
+                " WHERE id=? AND status='queued' AND (recipient=? OR recipient='*')",
+                (agent, time.time(), env_id, agent))
+            self.conn.commit()
+            if cur.rowcount == 0:
+                row = self._row(env_id)
+                if row is None:
+                    return None, "нет такого конверта"
+                if row["recipient"] not in (agent, "*"):
+                    return None, f"конверт адресован {row['recipient']}"
+                return None, f"конверт недоступен (status={row['status']})"
         if cur.rowcount == 0:
             row = self._row(env_id)
             return None, f"конверт недоступен (status={row['status'] if row else 'нет такого'})"
@@ -128,11 +155,22 @@ class Memory:
         return self.get(env_id), "ok"
 
     def complete(self, env_id: str, result: dict[str, Any], agent: str | None = None) -> bool:
-        self.conn.execute("UPDATE envelopes SET status='done', result=? WHERE id=?",
-                          (json.dumps(result, ensure_ascii=False, default=str), env_id))
-        self.event(env_id, "completed", {"agent": agent})
-        self.conn.commit()
-        return True
+        """Закрыть конверт результатом. Чужой результат перезаписать нельзя."""
+        with self.lock:
+            row = self._row(env_id)
+            if row is None:
+                return False
+            if agent and row["claimed_by"] and row["claimed_by"] != agent:
+                return False
+            cur = self.conn.execute(
+                "UPDATE envelopes SET status='done', result=? WHERE id=? AND status IN ('claimed','queued')",
+                (json.dumps(result, ensure_ascii=False, default=str), env_id))
+            self.conn.commit()
+            if cur.rowcount == 0:
+                return False
+            self.event(env_id, "completed", {"agent": agent})
+            self.conn.commit()
+            return True
 
     def get(self, env_id: str) -> dict[str, Any] | None:
         row = self._row(env_id)
@@ -164,6 +202,7 @@ class Memory:
     def remember(self, text: str, tags: str = "", importance: int = 3,
                  kind: str = "fact", source: str = "", session: str = "") -> int:
         text = (text or "").strip()
+        tags = tags or ""
         if not text:
             raise ValueError("пустой факт не запоминается")
         now = time.time()
@@ -187,11 +226,23 @@ class Memory:
         self.conn.commit()
 
     def recall(self, query: str, k: int = 20) -> list[dict[str, Any]]:
-        if not query.strip():
+        """Найти факты: сначала полнотекстовый индекс (FTS5, trigram), при отказе — LIKE."""
+        query = (query or "").strip()
+        if not query:
             return []
         terms = [t for t in re.findall(r"[\wЀ-ӿ]+", query.lower()) if len(t) >= 3]
         if not terms:
             return []
+        match = " OR ".join(f'"{t}"' for t in terms[:6])
+        try:
+            rows = self.conn.execute(
+                "SELECT f.* FROM facts_fts JOIN facts f ON f.id = facts_fts.rowid"
+                " WHERE facts_fts MATCH ? AND f.status='active'"
+                " ORDER BY f.importance DESC, f.updated_at DESC LIMIT ?", (match, k)).fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            pass  # индекс недоступен — падаем на LIKE ниже
         where = " OR ".join(f"text LIKE ?" for _ in terms[:6])
         rows = self.conn.execute(
             f"SELECT * FROM facts WHERE status='active' AND ({where}) ORDER BY importance DESC, updated_at DESC LIMIT ?",
@@ -206,9 +257,21 @@ class Memory:
         return "sha256:" + h
 
     def get_cold(self, ref: str) -> str | None:
+        """Достать артефакт по хешу.
+
+        Ссылка — это sha256, а не имя файла: путь не собирается из ввода,
+        и содержимое сверяется с хешем. Иначе «ссылка» была бы путём обхода.
+        """
         h = ref.split(":", 1)[-1]
+        if not re.fullmatch(r"[0-9a-f]{64}", h or ""):
+            return None
         p = self.cold_dir / f"{h}.txt"
-        return p.read_text(encoding="utf-8") if p.exists() else None
+        if not p.exists():
+            return None
+        text = p.read_text(encoding="utf-8")
+        if "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest() != ref:
+            return None
+        return text
 
     # ── сборка контекста под бюджет ──────────────────────────
     def pack(self, env: dict[str, Any]) -> dict[str, Any]:
@@ -224,27 +287,30 @@ class Memory:
         sources: list[str] = []
         dropped: list[str] = []
 
+        # Горячий ярус (цель и задача) входит всегда: без него агент не знает,
+        # что делать. Это единственное осознанное превышение бюджета.
         hot = f"ЦЕЛЬ: {env.get('goal','')}\nЗАДАЧА: {env.get('task','')}"
         cost = len(hot) / CHARS_PER_TOKEN
-        if cost <= approx:
-            parts.append(hot)
-            used += cost
-            sources.append("hot")
-        else:
-            dropped.append("hot: цель и задача не влезли в бюджет")
+        parts.append(hot)
+        used += cost
+        sources.append("hot")
+        if cost > approx:
+            dropped.append("hot: цель и задача сами превысили бюджет")
 
         query = env.get("context_query") or ""
-        if query and used < approx:
-            for row in self.recall(query, k=50):
-                c = len(row["text"]) / CHARS_PER_TOKEN + 1
-                if used + c > approx:
-                    dropped.append(f"warm: факт {row['id']} не влез в бюджет")
-                    continue
-                parts.append(f"- {row['text']}")
-                used += c
-                sources.append("warm")
-            if "warm" not in sources:
+        if query:
+            rows = self.recall(query, k=50)
+            if not rows:
                 dropped.append("warm: по запросу не найдено")
+            else:
+                for row in rows:
+                    c = len(row["text"]) / CHARS_PER_TOKEN + 1
+                    if used + c > approx:
+                        dropped.append(f"warm: факт {row['id']} не влез в бюджет")
+                        continue
+                    parts.append(f"- {row['text']}")
+                    used += c
+                    sources.append("warm")
 
         for ref in env.get("cold_refs") or []:
             text = self.get_cold(ref)
@@ -264,8 +330,14 @@ class Memory:
 
     # ── события (история) ─────────────────────────────────────
     def event(self, env_id: str | None, kind: str, payload: dict[str, Any]) -> None:
+        """Записать событие: в таблицу и в хеш-цепочку истории."""
+        body = {"env": env_id, "kind": kind, "payload": payload}
         self.conn.execute("INSERT INTO events(ts, envelope_id, kind, payload) VALUES(?,?,?,?)",
                           (time.time(), env_id, kind, json.dumps(payload, ensure_ascii=False, default=str)))
+        try:
+            self.chain.append(body)
+        except Exception:
+            pass  # история не должна ломать работу хаба
 
     def history(self, env_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute("SELECT ts, kind, payload FROM events WHERE envelope_id=? ORDER BY ts",

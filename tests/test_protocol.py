@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -160,7 +161,7 @@ def test_claim_is_exclusive(memory):
     first, _ = memory.claim(env_id, "alice")
     second, why = memory.claim(env_id, "bob")
     assert first is not None
-    assert second is None and "недоступен" in why
+    assert second is None and ("недоступен" in why or "адресован" in why), why
 
 
 def test_expired_envelope_is_not_delivered(memory):
@@ -227,8 +228,10 @@ def test_usage_cost_is_measured_not_priced():
 
 
 def test_x402_header_contract():
+    """Квитанция должна быть JSON и содержать сумму не меньше требуемой."""
     assert x402_header_ok({}, 0.005)[0] is False
-    assert x402_header_ok({"x-payment": "receipt"}, 0.005)[0] is True
+    assert x402_header_ok({"x-payment": "мусор"}, 0.005)[0] is False
+    assert x402_header_ok({"x-payment": json.dumps({"amount": 0.005})}, 0.005)[0] is True
 
 
 # ── хаб целиком ──────────────────────────────────────────────

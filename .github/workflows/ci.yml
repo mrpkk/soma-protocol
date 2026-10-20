@@ -22,3 +22,16 @@ jobs:
         run: pytest -v
       - name: Схема валидна
         run: python -c "import json;json.load(open('schemas/envelope.schema.json'))"
+
+  minimal:
+    # Установка без extras: jsonschema нет — значит, работает встроенный валидатор.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Установить без дополнений
+        run: pip install -e .
+      - name: Тесты без jsonschema
+        run: pytest -v

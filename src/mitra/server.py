@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .envelope import Envelope, route as route_envelope, sign, verify
+from .envelope import (Envelope, check_mandate, route as route_envelope, sign, verify)
 from .memory import Memory
 from .registry import Registry
 
@@ -43,9 +43,22 @@ class Hub:
         if errors:
             return {"ok": False, "error": "invalid_envelope", "details": errors}
         if sign_it:
-            sign(env)
-        self.memory.put(env)
+            try:
+                sign(env)
+            except RuntimeError as exc:
+                return {"ok": False, "error": "cannot_sign", "details": [str(exc)]}
+        if not self.memory.put(env):
+            return {"ok": False, "error": "duplicate_id", "details": ["конверт с таким id уже есть"]}
         return {"ok": True, "id": env.id, "signature": (env.signature or {}).get("algorithm", "none")}
+
+    def verify(self, envelope: dict[str, Any]) -> tuple[bool, str]:
+        """Проверить подпись конверта, сверив отправителя с реестром ключей."""
+        env = Envelope.from_dict(envelope)
+        expected = self.registry.public_key(env.sender)
+        return verify(env, expected_public_key=expected)
+
+    def stats(self) -> dict[str, Any]:
+        return self.memory.stats()
 
     def inbox(self, agent: str, limit: int = 10) -> list[dict[str, Any]]:
         out = []
@@ -59,11 +72,36 @@ class Hub:
         env, why = self.memory.claim(env_id, agent)
         if env is None:
             return {"ok": False, "reason": why}
+        # Подпись проверяется ДО выдачи работы: неподписанное или чужое — не отдаём.
+        ok, sig_why = self.verify(env)
+        if not ok:
+            return {"ok": False, "reason": f"подпись не прошла: {sig_why}"}
+        # Мандат проверяется до выдачи: агент получает работу только в рамках.
+        mand = (env.get("mandate") or None)
+        if mand:
+            from .envelope import Mandate
+            m = Mandate(**{k: v for k, v in mand.items()
+                           if k in Mandate.__dataclass_fields__})
+            allowed, rule_why = check_mandate({"payee": env.get("to"), "calls": 1}, m,
+                                              only=["payee", "calls", "validity_window"])
+            if not allowed:
+                return {"ok": False, "reason": f"мандат отклонил выдачу: {rule_why}"}
         return {"ok": True, "envelope": env, "context": self.memory.pack(env)}
 
     def complete(self, env_id: str, result: dict[str, Any], agent: str | None = None) -> dict[str, Any]:
+        """Закрыть конверт результатом. Фактическая стоимость сверяется с мандатом."""
+        env = self.memory.get(env_id)
+        if env and isinstance(result, dict) and "cost_usd" in result:
+            mand = env.get("mandate") or None
+            if mand:
+                from .envelope import Mandate
+                m = Mandate(**{k: v for k, v in mand.items()
+                               if k in Mandate.__dataclass_fields__})
+                allowed, why = check_mandate({"amount": result["cost_usd"]}, m, only=["amount"])
+                if not allowed:
+                    return {"ok": False, "id": env_id, "reason": f"мандат отклонил результат: {why}"}
         ok = self.memory.complete(env_id, result, agent)
-        return {"ok": ok, "id": env_id}
+        return {"ok": ok, "id": env_id, "reason": "ok" if ok else "конверт не найден или занят другим"}
 
     def route(self, env_id: str) -> dict[str, Any]:
         env = self.memory.get(env_id)
@@ -98,14 +136,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    MAX_BODY = 1_048_576  # 1 МиБ: конверт — это письмо, а не файл
+
     def _body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or 0)
+        raw_len = self.headers.get("Content-Length")
+        try:
+            length = int(raw_len or 0)
+        except (TypeError, ValueError):
+            raise ValueError("неверный Content-Length")
+        if length < 0 or length > self.MAX_BODY:
+            raise ValueError(f"размер тела вне границ (максимум {self.MAX_BODY})")
         if not length:
             return {}
         try:
             return json.loads(self.rfile.read(length).decode("utf-8"))
         except Exception:
-            return {}
+            raise ValueError("тело не является JSON")
 
     # ── маршруты ──────────────────────────────────────────────
     def do_GET(self) -> None:  # noqa: N802
@@ -118,7 +164,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"agents": self.hub.registry.agents})
         elif u.path == "/v1/inbox":
             agent = (q.get("agent") or [""])[0]
-            limit = int((q.get("limit") or ["10"])[0])
+            try:
+                limit = int((q.get("limit") or ["10"])[0])
+            except ValueError:
+                limit = 10
+            limit = max(1, min(limit, 100))
             self._send(200, {"agent": agent, "items": self.hub.inbox(agent, limit)})
         elif u.path.startswith("/v1/envelopes/"):
             env_id = u.path.rsplit("/", 1)[-1]
@@ -126,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
             if not env:
                 self._send(404, {"error": "not_found"})
                 return
-            ok, why = verify(Envelope.from_dict(env))
+            ok, why = self.hub.verify(env)
             self._send(200, {"envelope": env, "signature_ok": ok, "signature": why,
                              "history": self.hub.memory.history(env_id)})
         else:
@@ -134,11 +184,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         u = urlparse(self.path)
-        body = self._body()
+        try:
+            body = self._body()
+        except ValueError as exc:
+            self._send(400, {"error": "bad_request", "details": [str(exc)]})
+            return
         if u.path == "/v1/messages":
             env = Envelope.from_dict({k: v for k, v in body.items()
                                       if k in Envelope.__dataclass_fields__})
-            self._send(200, self.hub.send(env, sign_it=body.get("sign", True)))
+            # Подпись всегда ставит хаб: клиентская подпись не принимается.
+            self._send(200, self.hub.send(env, sign_it=True))
         elif u.path == "/v1/claim":
             self._send(200, self.hub.claim(body.get("id", ""), body.get("agent", "")))
         elif u.path == "/v1/complete":
@@ -146,11 +201,6 @@ class Handler(BaseHTTPRequestHandler):
                                                body.get("agent")))
         elif u.path == "/v1/route":
             self._send(200, self.hub.route(body.get("id", "")))
-        elif u.path == "/v1/remember":
-            fid = self.hub.memory.remember(body.get("text", ""), tags=body.get("tags", ""),
-                                            importance=int(body.get("importance", 3)),
-                                            source=body.get("source", ""))
-            self._send(200, {"ok": True, "id": fid})
         else:
             self._send(404, {"error": "not_found"})
 

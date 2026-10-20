@@ -93,6 +93,16 @@ Mitra does not replace any of these — it carries envelopes between them:
 - **Sigstore / EIP-712** — same primitive (signed payload, public key travels with it).
 - **Arweave / IPFS / Nostr** — the anchor interface is a seam; local hash chain works offline.
 
+## Trust, stated plainly
+
+- The reference HTTP transport has **no authentication** and binds `127.0.0.1`. Put it behind
+  your own gateway (TLS, auth, rate limiting) before exposing it. Bodies are capped at 1 MiB.
+- A signature proves **integrity** by itself. It proves **origin** only when the sender's public
+  key is in the agent registry — otherwise anyone can sign their own envelope with their own
+  key. The reference implementation checks the registry when it has one.
+- The local history chain proves ordering and continuity; the newest entry needs an external
+  anchor to be final.
+
 ## Status
 
 Beta. The protocol is versioned (`mitra/1`); envelopes are signed, budgets are hard, refusals are

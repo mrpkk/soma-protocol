@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -35,11 +36,11 @@ class Usage:
 
     def cost(self, rates: dict[str, float] | None = None) -> float:
         r = rates or RATES
-        return (self.tokens / 1000 * r["tokens"]
-                + self.cpu_seconds * r["cpu_seconds"]
-                + self.bytes_out * r["bytes_out"]
-                + self.storage_writes * r["storage_writes"]
-                + self.external_calls * r["external_calls"])
+        return (self.tokens / 1000 * r.get("tokens", 0.0)
+                + self.cpu_seconds * r.get("cpu_seconds", 0.0)
+                + self.bytes_out * r.get("bytes_out", 0.0)
+                + self.storage_writes * r.get("storage_writes", 0.0)
+                + self.external_calls * r.get("external_calls", 0.0))
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -64,4 +65,21 @@ def x402_header_ok(headers: dict[str, str], expected_usdc: float) -> tuple[bool,
         return False, "нет заголовка X-PAYMENT"
     if expected_usdc <= 0:
         return True, "оплата не требуется"
-    return True, "квитанция оплаты предъявлена (проверка подписи — на транспорте)"
+    try:
+        receipt = json.loads(raw)
+    except Exception:
+        return False, "квитанция оплаты не является JSON"
+    if not isinstance(receipt, dict):
+        return False, "квитанция оплаты должна быть объектом"
+    amount = receipt.get("amount")
+    if amount is None:
+        return False, "в квитанции нет суммы"
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return False, f"сумма в квитанции не число: {amount!r}"
+    if amount + 1e-9 < expected_usdc:
+        return False, f"сумма {amount} меньше требуемой {expected_usdc}"
+    if receipt.get("asset") and not str(receipt["asset"]).upper().startswith("USDC"):
+        return False, f"актив {receipt['asset']} не USDC"
+    return True, "квитанция оплаты предъявлена (подпись и сеть — на транспорте)"
