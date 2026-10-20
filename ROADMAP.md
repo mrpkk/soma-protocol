@@ -16,10 +16,10 @@ Protocol: `mitra/1`. Everything below is additive unless it says otherwise.
 - History: hash-linked append-only chain with a seam for external anchors.
 - Conformance suite: 10 checks any implementation can pass.
 - `agents.json` (A2A Agent Card) for discovery.
+- **MCP adapter** (`src/mitra/mcp_adapter.py`): seven tools over the same envelopes; stdio and HTTP.
 
 ## Next
 
-- **MCP adapter** — the same operations as MCP tools, no shape change.
 - **A2A adapter** — envelopes mapped onto A2A tasks; card publishing.
 - **x402 settlement** — a reference receiver that verifies a payment receipt and settles it.
 - **External anchors** — Arweave and IPFS publishers behind the `Anchor` interface.

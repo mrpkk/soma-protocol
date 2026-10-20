@@ -59,6 +59,7 @@ implementation** and a **conformance suite**. Not a platform, not a framework, n
 | `src/mitra/envelope.py` | the protocol core: envelope, canonicalization, signing, mandate rules, router, JSON Schema |
 | `src/mitra/memory.py` | three memory tiers — hot queue, warm facts (SQLite + FTS5), cold artifacts by hash |
 | `src/mitra/server.py` | HTTP transport (stdlib only) — `/v1/messages`, `/v1/inbox`, `/v1/claim`, `/v1/complete`, `/v1/route` |
+| `src/mitra/mcp_adapter.py` | MCP adapter — the same operations as MCP tools (`mitra_send`, `mitra_inbox`, `mitra_claim`, `mitra_complete`, `mitra_route`, `mitra_verify`, `mitra_stats`) |
 | `src/mitra/payments.py` | usage metering (tokens/CPU/bytes/writes/calls) and the x402-compatible payment contract |
 | `src/mitra/anchors.py` | append-only history chain (hash-linked), with a seam for Arweave/IPFS/Nostr |
 | `src/mitra/registry.py` | the agent registry — a file, so it travels with the agent |
