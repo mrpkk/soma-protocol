@@ -58,7 +58,7 @@ That is the reason Ed25519 is the default: a skeptic can check without trusting 
 - Put the HTTP transport behind a reverse proxy with TLS and authentication. The reference
   implementation binds `127.0.0.1` by default and has **no authentication** — it is meant to
   sit behind your own gateway. Bodies are capped at 1 MiB; add rate limiting yourself.
-- Keep the signing key out of the repository and out of images. `MITRA_SIGNING_KEY` points to
+- Keep the signing key out of the repository and out of images. `SOMA_SIGNING_KEY` points to
   the key file; the file is created with mode 0600.
 - Rate-limit inbound envelopes at the gateway. The protocol has no built-in spam control; a
   public deployment must add its own (token, quota, or proof-of-work).

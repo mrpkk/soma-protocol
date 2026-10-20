@@ -1,6 +1,6 @@
 # Roadmap
 
-Protocol: `mitra/1`. Everything below is additive unless it says otherwise.
+Protocol: `soma/1`. Everything below is additive unless it says otherwise.
 
 ## Done
 

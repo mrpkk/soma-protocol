@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 def default_path() -> Path:
-    return Path(os.environ.get("MITRA_AGENTS", Path.home() / ".mitra" / "agents.json"))
+    return Path(os.environ.get("SOMA_AGENTS", Path.home() / ".soma" / "agents.json"))
 
 #: Заготовка реестра на старте: встроенные роли без внешних зависимостей.
 DEFAULT_AGENTS: dict[str, Any] = {
@@ -67,7 +67,7 @@ class Registry:
             "url": url,
             "version": "1.0.0",
             "capabilities": spec.get("capabilities", []),
-            "provider": {"organization": "Mitra", "url": "https://mitra.dev"},
-            "protocol": "mitra/1",
+            "provider": {"organization": "Soma", "url": "https://soma.dev"},
+            "protocol": "soma/1",
             "skills": [{"id": c, "name": c} for c in spec.get("capabilities", [])],
         }

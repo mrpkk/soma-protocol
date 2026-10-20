@@ -19,20 +19,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mitra.anchors import LocalChain  # noqa: E402
-from mitra.envelope import (Envelope, Mandate, canonical, check_mandate,  # noqa: E402
+from soma.anchors import LocalChain  # noqa: E402
+from soma.envelope import (Envelope, Mandate, canonical, check_mandate,  # noqa: E402
                             generate_key, sign, validate)
-from mitra.memory import Memory  # noqa: E402
-from mitra.payments import x402_header_ok  # noqa: E402
-from mitra.registry import Registry  # noqa: E402
-from mitra.server import Hub, make_server  # noqa: E402
+from soma.memory import Memory  # noqa: E402
+from soma.payments import x402_header_ok  # noqa: E402
+from soma.registry import Registry  # noqa: E402
+from soma.server import Hub, make_server  # noqa: E402
 
 
 @pytest.fixture()
 def key(tmp_path) -> bytes:
     path = tmp_path / "signing.key"
     generate_key(path)
-    os.environ["MITRA_SIGNING_KEY"] = str(path)
+    os.environ["SOMA_SIGNING_KEY"] = str(path)
     return path.read_bytes()
 
 
@@ -108,8 +108,8 @@ def test_cold_ref_rejects_content_not_matching_hash(memory):
 # ── подпись: никакого молчаливого понижения ──────────────────
 
 def test_sign_without_key_or_secret_raises(monkeypatch, tmp_path):
-    monkeypatch.delenv("MITRA_SIGNING_KEY", raising=False)
-    monkeypatch.delenv("MITRA_SECRET", raising=False)
+    monkeypatch.delenv("SOMA_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("SOMA_SECRET", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     env = Envelope(goal="g", task="t")
     with pytest.raises(RuntimeError):
@@ -117,8 +117,8 @@ def test_sign_without_key_or_secret_raises(monkeypatch, tmp_path):
 
 
 def test_hub_send_fails_when_cannot_sign(monkeypatch, tmp_path):
-    monkeypatch.delenv("MITRA_SIGNING_KEY", raising=False)
-    monkeypatch.delenv("MITRA_SECRET", raising=False)
+    monkeypatch.delenv("SOMA_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("SOMA_SECRET", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     hub = Hub(Memory(path=tmp_path / "m.db", cold_dir=tmp_path / "cold"),
               Registry(agents={}))

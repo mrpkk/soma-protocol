@@ -1,4 +1,4 @@
-# Mitra
+# Soma
 
 **One protocol for agents to trust each other, remember together, and pay for what they do.**
 
@@ -22,10 +22,10 @@ POST /v1/messages
 
 ```bash
 pip install -e ".[dev]"
-mitra keygen                       # ключ подписи Ed25519
-mitra serve                        # хаб на http://127.0.0.1:8765
-mitra send --to research --goal "find the market" --task "scan 3 sources" --budget 2000
-mitra inbox --agent research
+soma keygen                       # ключ подписи Ed25519
+soma serve                        # хаб на http://127.0.0.1:8765
+soma send --to research --goal "find the market" --task "scan 3 sources" --budget 2000
+soma inbox --agent research
 ```
 
 Or in Python:
@@ -49,7 +49,7 @@ session, trusts on faith, spends without a mandate, and cannot prove what it did
 provenance, authorization and accounting all exist — but as separate products that do not talk
 to each other.
 
-Mitra is the glue. It is deliberately small: the core is a **protocol**, a **reference
+Soma is the glue. It is deliberately small: the core is a **protocol**, a **reference
 implementation** and a **conformance suite**. Not a platform, not a framework, not a vendor.
 
 ## What is in the box
@@ -59,7 +59,7 @@ implementation** and a **conformance suite**. Not a platform, not a framework, n
 | `src/mitra/envelope.py` | the protocol core: envelope, canonicalization, signing, mandate rules, router, JSON Schema |
 | `src/mitra/memory.py` | three memory tiers — hot queue, warm facts (SQLite + FTS5), cold artifacts by hash |
 | `src/mitra/server.py` | HTTP transport (stdlib only) — `/v1/messages`, `/v1/inbox`, `/v1/claim`, `/v1/complete`, `/v1/route` |
-| `src/mitra/mcp_adapter.py` | MCP adapter — the same operations as MCP tools (`mitra_send`, `mitra_inbox`, `mitra_claim`, `mitra_complete`, `mitra_route`, `mitra_verify`, `mitra_stats`) |
+| `src/mitra/mcp_adapter.py` | MCP adapter — the same operations as MCP tools (`soma_send`, `soma_inbox`, `soma_claim`, `soma_complete`, `soma_route`, `soma_verify`, `soma_stats`) |
 | `src/mitra/payments.py` | usage metering (tokens/CPU/bytes/writes/calls) and the x402-compatible payment contract |
 | `src/mitra/anchors.py` | append-only history chain (hash-linked), with a seam for Arweave/IPFS/Nostr |
 | `src/mitra/registry.py` | the agent registry — a file, so it travels with the agent |
@@ -85,7 +85,7 @@ a rule, and a repeated envelope id does not overwrite the original.
 
 ## Composing with what already exists
 
-Mitra does not replace any of these — it carries envelopes between them:
+Soma does not replace any of these — it carries envelopes between them:
 
 - **MCP** — an adapter exposes the same operations as MCP tools.
 - **A2A** — `agents.json` in this repo is an A2A Agent Card; envelopes map onto A2A tasks.
@@ -106,7 +106,7 @@ Mitra does not replace any of these — it carries envelopes between them:
 
 ## Status
 
-Beta. The protocol is versioned (`mitra/1`); envelopes are signed, budgets are hard, refusals are
+Beta. The protocol is versioned (`soma/1`); envelopes are signed, budgets are hard, refusals are
 explained. See `ROADMAP.md` for what is next and `SECURITY.md` for the trust model.
 
 ## License

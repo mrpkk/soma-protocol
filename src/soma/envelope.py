@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 VERSION = "1.0"
-PROTOCOL = "mitra/1"
+PROTOCOL = "soma/1"
 
 # ───────────────────────────────────────────────────────────── конверт
 
@@ -115,8 +115,8 @@ class Envelope:
 # ───────────────────────────────────────────────────────────── подпись
 
 def _ed25519_key() -> bytes | None:
-    path = os.environ.get("MITRA_SIGNING_KEY")
-    for candidate in (path, os.path.expanduser("~/.local/share/mitra/signing.key")):
+    path = os.environ.get("SOMA_SIGNING_KEY")
+    for candidate in (path, os.path.expanduser("~/.local/share/soma/signing.key")):
         if candidate and os.path.exists(candidate):
             with open(candidate, "rb") as f:
                 return f.read()
@@ -129,7 +129,7 @@ def generate_key(path: str | Path | None = None) -> dict[str, str]:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives import serialization
     target = Path(path or os.environ.get(
-        "MITRA_SIGNING_KEY", Path.home() / ".local" / "share" / "mitra" / "signing.key"))
+        "SOMA_SIGNING_KEY", Path.home() / ".local" / "share" / "soma" / "signing.key"))
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         raise FileExistsError(f"ключ уже есть: {target} (старые подписи перестанут проверяться)")
@@ -165,12 +165,12 @@ def sign(envelope: Envelope, key: bytes | None = None) -> Envelope:
             "signer": "hub",
         }
         return envelope
-    secret = os.environ.get("MITRA_SECRET")
+    secret = os.environ.get("SOMA_SECRET")
     if not secret:
         # Молча подписывать «ничем» нельзя: это выглядит как подпись, а значит —
         # как доверие. Явная ошибка лучше тишины.
         raise RuntimeError(
-            "нечем подписать: нет ключа Ed25519 (MITRA_SIGNING_KEY) и нет MITRA_SECRET")
+            "нечем подписать: нет ключа Ed25519 (SOMA_SIGNING_KEY) и нет SOMA_SECRET")
     mac = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
     envelope.signature = {"algorithm": "hmac-sha256", "signature": mac, "signer": "hub"}
     return envelope
@@ -190,7 +190,7 @@ def verify(envelope: Envelope, secret: bytes | None = None,
         return False, "конверт не подписан"
     payload = canonical(envelope.payload())
     if algo == "hmac-sha256":
-        sec = secret or (os.environ.get("MITRA_SECRET") or "").encode()
+        sec = secret or (os.environ.get("SOMA_SECRET") or "").encode()
         if not sec:
             return False, "нет общего секрета для проверки HMAC"
         expect = hmac.new(sec, payload, hashlib.sha256).hexdigest()
@@ -315,7 +315,7 @@ def route(envelope: Envelope, registry: dict[str, Any]) -> dict[str, Any]:
 
 _ENVELOPE_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://mitra.dev/schemas/envelope-1.0.json",
+    "$id": "https://soma.dev/schemas/envelope-1.0.json",
     "title": "Mitra envelope",
     "type": "object",
     "required": ["goal", "task", "id", "created_at"],

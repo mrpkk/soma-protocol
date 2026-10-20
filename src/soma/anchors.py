@@ -28,7 +28,7 @@ class LocalChain:
     """Append-only цепочка в файле. Хеш каждой записи включает хеш предыдущей."""
 
     def __init__(self, path: str | Path | None = None):
-        self.path = Path(path) if path else Path.home() / ".mitra" / "history.jsonl"
+        self.path = Path(path) if path else Path.home() / ".soma" / "history.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Дописывание и поиск предыдущего хеша должны быть атомарны:
         # иначе два потока возьмут один prev и разорвут цепочку.

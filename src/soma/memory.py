@@ -71,15 +71,15 @@ class Memory:
 
     def __init__(self, path: str | Path | None = None, cold_dir: str | Path | None = None,
                  chain: Any | None = None):
-        self.path = Path(path or os.environ.get("MITRA_DB", Path.home() / ".mitra" / "mitra.db"))
-        self.cold_dir = Path(cold_dir or os.environ.get("MITRA_COLD", Path.home() / ".mitra" / "cold"))
+        self.path = Path(path or os.environ.get("SOMA_DB", Path.home() / ".soma" / "soma.db"))
+        self.cold_dir = Path(cold_dir or os.environ.get("SOMA_COLD", Path.home() / ".soma" / "cold"))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # HTTP-сервер многопоточный: соединение общее, доступ под локом.
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.lock = threading.RLock()
         from .anchors import LocalChain
         self.chain = chain if chain is not None else LocalChain(
-            os.environ.get("MITRA_HISTORY", str(self.path.parent / "history.jsonl")))
+            os.environ.get("SOMA_HISTORY", str(self.path.parent / "history.jsonl")))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.executescript(FTS_TRIGGERS)

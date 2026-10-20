@@ -20,17 +20,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mitra.envelope import Envelope, generate_key  # noqa: E402
-from mitra.memory import Memory  # noqa: E402
-from mitra.registry import Registry  # noqa: E402
-from mitra.server import Hub, make_server  # noqa: E402
+from soma.envelope import Envelope, generate_key  # noqa: E402
+from soma.memory import Memory  # noqa: E402
+from soma.registry import Registry  # noqa: E402
+from soma.server import Hub, make_server  # noqa: E402
 
 
 @pytest.fixture()
 def key(tmp_path):
     path = tmp_path / "signing.key"
     generate_key(path)
-    os.environ["MITRA_SIGNING_KEY"] = str(path)
+    os.environ["SOMA_SIGNING_KEY"] = str(path)
     return path
 
 
@@ -99,7 +99,7 @@ def test_route_then_claim_over_http(server):
 
 def test_refused_claim_leaves_envelope_queued(hub):
     """Мандат, отклонивший выдачу, не забирает конверт у легитимного исполнителя."""
-    from mitra.envelope import Mandate
+    from soma.envelope import Mandate
     env = Envelope(goal="g", task="t", to="alice",
                    mandate=Mandate(allowed_payees=["bob"]))
     assert hub.send(env)["ok"]
@@ -205,7 +205,7 @@ def test_hub_accepts_client_signature_and_checks_registry(server):
     priv = Ed25519PrivateKey.generate()
     pub = base64.b64encode(priv.public_key().public_bytes_raw()).decode()
     env = Envelope(goal="g", task="t", to="research", sender="trusted")
-    from mitra.envelope import canonical
+    from soma.envelope import canonical
     payload = canonical(env.payload())
     sig = {"algorithm": "ed25519",
            "signature": base64.b64encode(priv.sign(payload)).decode(),

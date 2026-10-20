@@ -1,6 +1,6 @@
-# Mitra protocol — `mitra/1`
+# Mitra protocol — `soma/1`
 
-Status: **beta**. Version of the wire format is `mitra/1`; the field set below is frozen for it.
+Status: **beta**. Version of the wire format is `soma/1`; the field set below is frozen for it.
 JSON Schema: [`schemas/envelope.schema.json`](schemas/envelope.schema.json) (exported from the code —
 the code is the single source of truth).
 
@@ -227,7 +227,7 @@ MITRA_CONFORMANCE_IMPL="my_package.hub:MyHubFactory" pytest tests/test_conforman
 
 ## 8. Versioning
 
-`mitra/1` is a protocol identifier, not a marketing version. Breaking changes to the envelope
+`soma/1` is a protocol identifier, not a marketing version. Breaking changes to the envelope
 get a new identifier (`mitra/2`). Additive fields keep the identifier and must be ignored by
 old readers — which is why the schema forbids `null` values: absence means "not specified",
 so a new field never breaks an old parser.

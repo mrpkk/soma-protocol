@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mitra-hub"
-version = "1.0.1"
-description = "Mitra — протокол доверия, памяти и расчёта между агентами"
+name = "soma-protocol"
+version = "1.1.0"
+description = "Soma — протокол коммуникации агентов: доверие, память, расчёт"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -27,11 +27,11 @@ mcp = ["mcp>=2.0"]                   # MCP-адаптер
 dev = ["pytest>=8", "cryptography>=42", "jsonschema>=4.20"]
 
 [project.scripts]
-mitra = "mitra.cli:main"
+soma = "soma.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/mrpkk/mitra-hub"
-Protocol = "https://github.com/mrpkk/mitra-hub/blob/main/PROTOCOL.md"
+Homepage = "https://github.com/mrpkk/soma-protocol"
+Protocol = "https://github.com/mrpkk/soma-protocol/blob/main/PROTOCOL.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

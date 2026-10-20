@@ -40,20 +40,20 @@ class MitraHarness:
     """Обёртка над эталонной реализацией — по умолчанию."""
 
     def __init__(self, tmp_path: Path):
-        from mitra.envelope import generate_key
-        from mitra.memory import Memory
-        from mitra.registry import Registry
-        from mitra.server import Hub
+        from soma.envelope import generate_key
+        from soma.memory import Memory
+        from soma.registry import Registry
+        from soma.server import Hub
 
         key = tmp_path / "signing.key"
         generate_key(key)
-        os.environ["MITRA_SIGNING_KEY"] = str(key)
+        os.environ["SOMA_SIGNING_KEY"] = str(key)
         self.hub = Hub(Memory(path=tmp_path / "m.db", cold_dir=tmp_path / "cold"),
                        Registry(agents={"research": {"capabilities": ["research"],
                                                      "cost_per_call": 0.01}}))
 
     def send(self, **kwargs: Any) -> dict[str, Any]:
-        from mitra.envelope import Envelope
+        from soma.envelope import Envelope
         env = Envelope(**kwargs)
         return self.hub.send(env)
 
@@ -174,7 +174,7 @@ def test_c9_completion_closes_the_envelope(impl):
 
 def test_c11_mandate_refusal_names_a_rule(impl):
     """Отказ по мандату — с именем правила, а не булевым флагом."""
-    from mitra.envelope import Mandate, check_mandate
+    from soma.envelope import Mandate, check_mandate
     ok, why = check_mandate({"amount": 999999}, Mandate(max_cost_usd=1.0))
     assert not ok and ":" in why, why
 

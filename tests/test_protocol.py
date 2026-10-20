@@ -18,20 +18,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mitra.anchors import LocalChain  # noqa: E402
-from mitra.envelope import (Envelope, Mandate, canonical, check_mandate,  # noqa: E402
+from soma.anchors import LocalChain  # noqa: E402
+from soma.envelope import (Envelope, Mandate, canonical, check_mandate,  # noqa: E402
                             generate_key, route, sign, validate, verify)
-from mitra.memory import Memory  # noqa: E402
-from mitra.payments import Usage, quote, x402_header_ok  # noqa: E402
-from mitra.registry import Registry  # noqa: E402
-from mitra.server import Hub  # noqa: E402
+from soma.memory import Memory  # noqa: E402
+from soma.payments import Usage, quote, x402_header_ok  # noqa: E402
+from soma.registry import Registry  # noqa: E402
+from soma.server import Hub  # noqa: E402
 
 
 @pytest.fixture(scope="session")
 def key(tmp_path_factory) -> bytes:
     path = tmp_path_factory.mktemp("keys") / "signing.key"
     generate_key(path)
-    os.environ["MITRA_SIGNING_KEY"] = str(path)
+    os.environ["SOMA_SIGNING_KEY"] = str(path)
     return path.read_bytes()
 
 

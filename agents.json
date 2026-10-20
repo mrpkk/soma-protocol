@@ -1,13 +1,13 @@
 {
-  "name": "mitra-hub",
-  "description": "Mitra — протокол доверия, памяти и расчёта между агентами: конверт с бюджетом, мандатом и подписью; память в три яруса; отказ всегда с причиной.",
+  "name": "soma-protocol",
+  "description": "Soma — протокол коммуникации агентов: конверт с бюджетом, мандатом и подписью; память в три яруса; отказ всегда с причиной; деградация объявлена.",
   "url": "https://github.com/mrpkk/mitra-hub",
   "version": "1.0.0",
   "provider": {
     "organization": "Mitra",
     "url": "https://github.com/mrpkk/mitra-hub"
   },
-  "protocol": "mitra/1",
+  "protocol": "soma/1",
   "capabilities": [
     "send",
     "claim",

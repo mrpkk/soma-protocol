@@ -1,4 +1,4 @@
-"""Mitra — командная строка. 60 секунд до первого конверта."""
+"""Soma — командная строка. 60 секунд до первого конверта."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from .server import Hub, serve
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="mitra", description="Mitra — протокол между агентами")
+    ap = argparse.ArgumentParser(prog="soma", description="Mitra — протокол между агентами")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("send", help="отправить конверт")

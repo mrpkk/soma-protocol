@@ -143,10 +143,10 @@ def _validate(env: Envelope) -> list[str]:
 class Handler(BaseHTTPRequestHandler):
     hub: Hub  # проставляется в make_server
 
-    server_version = "mitra/1.0"
+    server_version = "soma/1.0"
 
     def log_message(self, fmt: str, *args: Any) -> None:  # тише в лог
-        if os.environ.get("MITRA_QUIET") == "1":
+        if os.environ.get("SOMA_QUIET") == "1":
             return
         super().log_message(fmt, *args)
 
@@ -181,7 +181,7 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         if u.path == "/healthz":
-            self._send(200, {"ok": True, "protocol": "mitra/1", "time": time.time(),
+            self._send(200, {"ok": True, "protocol": "soma/1", "time": time.time(),
                              "stats": self.hub.memory.stats()})
         elif u.path == "/v1/agents":
             self._send(200, {"agents": self.hub.registry.agents})
@@ -235,7 +235,7 @@ def make_server(hub: Hub | None = None, host: str = "127.0.0.1", port: int = 876
 
 def serve(host: str = "127.0.0.1", port: int = 8765, hub: Hub | None = None) -> None:
     srv = make_server(hub, host, port)
-    print(f"mitra: слушаю http://{host}:{port}  (POST /v1/messages)", flush=True)
+    print(f"soma: слушаю http://{host}:{port}  (POST /v1/messages)", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
