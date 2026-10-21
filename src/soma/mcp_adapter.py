@@ -49,17 +49,25 @@ def _envelope(**kwargs) -> str:
     return json.dumps(hub().send(env), ensure_ascii=False)
 
 
+#: Публичный узел не хранит ничего приватного: видимость задаёт сервер.
+#: Читается в момент вызова, а не при импорте — иначе смена режима не подхватывается.
+def _forced_visibility() -> str:
+    return os.environ.get("SOMA_FORCE_VISIBILITY", "")
+
+
 @mcp.tool(name="soma_send",
           description="Отправить конверт агенту: цель, задача, получатель, бюджет токенов, мандат и цена. Конверт подписывается и попадает в очередь.")
 async def soma_send(goal: str, task: str, to: str = "*", sender: str = "mcp",
                      capability: list[str] | None = None, token_budget: int = 2000,
                      context_query: str = "", max_cost_usd: float | None = None,
-                     price_usdc: float | None = None, ttl_s: float = 3600) -> str:
+                     price_usdc: float | None = None, ttl_s: float = 3600,
+                     visibility: str = "private") -> str:
     mand = {"max_cost_usd": max_cost_usd} if max_cost_usd is not None else None
+    vis = _forced_visibility() or visibility
     return _envelope(goal=goal, task=task, to=to, sender=sender,
                      capability=capability or [], token_budget=token_budget,
                      context_query=context_query, mandate=mand,
-                     price_usdc=price_usdc, ttl_s=ttl_s)
+                     price_usdc=price_usdc, ttl_s=ttl_s, visibility=vis)
 
 
 @mcp.tool(name="soma_inbox",
@@ -101,12 +109,14 @@ async def soma_stats() -> str:
     return json.dumps(hub().memory.stats(), ensure_ascii=False, indent=2)
 
 
-def _build_app(http_path: str):
+def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
     """ASGI-приложение MCP: transport-security и управляемый профиль."""
     import hmac
     from mcp.server.transport_security import TransportSecuritySettings
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
+
+    from .limits import IpRateLimit
 
     app = mcp.streamable_http_app(
         streamable_http_path=http_path,
@@ -126,12 +136,20 @@ def _build_app(http_path: str):
                 return await call_next(request)
 
         app.add_middleware(BearerAuth)
+
+    if rate_limit > 0:
+        app.add_middleware(IpRateLimit(rate_limit).as_middleware())
+    if force_visibility:
+        # Видимость читается инструментом в момент вызова — выставляем здесь,
+        # чтобы параметр сборки приложения и поведение инструмента совпадали.
+        os.environ["SOMA_FORCE_VISIBILITY"] = force_visibility
     return app
 
 
 def _run_http(args) -> None:
     import uvicorn
-    uvicorn.run(_build_app(args.http_path), host=args.host, port=args.http, log_level="warning")
+    uvicorn.run(_build_app(args.http_path, args.rate_limit_per_hour, args.force_visibility),
+                host=args.host, port=args.http, log_level="warning")
 
 
 def _run_stdio() -> None:
@@ -145,6 +163,11 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8193") or 8193))
     ap.add_argument("--http-path", default="/hub/mcp",
                     help="путь MCP под префиксом туннеля (путь не срезается)")
+    ap.add_argument("--rate-limit-per-hour", type=int,
+                    default=int(os.environ.get("SOMA_RATE_LIMIT_PER_HOUR", "0") or 0),
+                    help="лимит запросов в час на один IP (0 — без ограничения)")
+    ap.add_argument("--force-visibility", default=os.environ.get("SOMA_FORCE_VISIBILITY", ""),
+                    help="принудительная видимость для публичного узла (public)")
     args = ap.parse_args()
     if args.http:
         _run_http(args)
