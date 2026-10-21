@@ -1,5 +1,5 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.mrpkk/soma-protocol",
   "description": "Agent protocol: an envelope with budget, mandate and signature; memory, reputation and federation.",
   "status": "active",
@@ -10,54 +10,19 @@
     "id": "1427584322"
   },
   "websiteUrl": "https://github.com/mrpkk/soma-protocol",
-  "packages": [
+  "title": "Soma",
+  "remotes": [
     {
-      "registryType": "pypi",
-      "registryBaseUrl": "https://pypi.org",
-      "identifier": "soma-protocol",
-      "version": "1.2.0",
-      "runtimeHint": "uvx",
-      "transport": {
-        "type": "stdio"
-      },
-      "environmentVariables": [
-        {
-          "name": "SOMA_SIGNING_KEY",
-          "description": "Путь к ключу Ed25519 для подписи конвертов",
-          "isRequired": false,
-          "isSecret": false
-        },
-        {
-          "name": "SOMA_PLUGINS",
-          "description": "Плагины швов: module:factory через запятую",
-          "isRequired": false,
-          "isSecret": false
-        }
-      ]
-    },
+      "type": "streamable-http",
+      "url": "https://rta.lat/hub/mcp"
+    }
+  ],
+  "icons": [
     {
-      "registryType": "pypi",
-      "registryBaseUrl": "https://pypi.org",
-      "identifier": "soma-protocol",
-      "version": "1.2.0",
-      "runtimeHint": "uvx",
-      "transport": {
-        "type": "streamable-http",
-        "url": "https://rta.lat/hub/mcp"
-      },
-      "environmentVariables": [
-        {
-          "name": "SOMA_MANAGED",
-          "description": "1 — включить bearer-токен",
-          "isRequired": false,
-          "isSecret": false
-        },
-        {
-          "name": "SOMA_TOKEN",
-          "description": "Токен доступа к хабу",
-          "isRequired": false,
-          "isSecret": true
-        }
+      "src": "https://raw.githubusercontent.com/mrpkk/soma-protocol/main/docs/icon.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
       ]
     }
   ]
