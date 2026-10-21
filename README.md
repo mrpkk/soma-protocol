@@ -156,6 +156,25 @@ pip install my-engine && soma serve
 A broken plugin is skipped, not fatal: the hub starts with the reference implementations and says
 so in `/healthz`.
 
+## Server profile
+
+By default the reference transport is **local**: no authentication, binds `127.0.0.1` — a
+component to put behind your own gateway. For a public deployment there is a managed profile:
+
+```bash
+SOMA_MANAGED=1 SOMA_TOKEN=<secret> SOMA_QUOTA_PER_HOUR=100 soma serve
+```
+
+| Variable | Meaning |
+|---|---|
+| `SOMA_MANAGED=1` | require `Authorization: Bearer $SOMA_TOKEN` on every request |
+| `SOMA_TOKEN` | the token; if it is not set, the managed profile denies **everything** |
+| `SOMA_QUOTA_PER_HOUR` | max envelopes per sender per hour (0 = no limit) |
+| `SOMA_MAX_BODY` | max request body in bytes (default 1 MiB) |
+
+Without a token configured, the managed profile is closed — a misconfiguration must not open
+the door. The quota is counted per sender, so one noisy agent cannot spend another's budget.
+
 ## Trust, stated plainly
 
 - The reference HTTP transport has **no authentication** and binds `127.0.0.1`. Put it behind

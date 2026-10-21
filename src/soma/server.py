@@ -18,6 +18,7 @@ HTTP-эндпоинты:
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import time
@@ -158,14 +159,53 @@ def _validate(env: Envelope) -> list[str]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    hub: Hub  # проставляется в make_server
+    """HTTP-поверхность протокола.
 
+    По умолчанию — локальный режим: без аутентификации, для работы за своим
+    шлюзом. Профиль `SOMA_MANAGED=1` включает обязательный bearer-токен и
+    квоты: это то, что нужно для публикации наружу.
+    """
+
+    hub: Hub  # проставляется в make_server
     server_version = "soma/1.0"
 
     def log_message(self, fmt: str, *args: Any) -> None:  # тише в лог
         if os.environ.get("SOMA_QUIET") == "1":
             return
         super().log_message(fmt, *args)
+
+    # ── серверный профиль ───────────────────────────────────
+    @property
+    def managed(self) -> bool:
+        return os.environ.get("SOMA_MANAGED") == "1"
+
+    def _auth_ok(self) -> bool:
+        """Bearer-токен, если включён управляемый профиль."""
+        if not self.managed:
+            return True
+        expected = os.environ.get("SOMA_TOKEN", "")
+        if not expected:
+            return False
+        got = self.headers.get("authorization") or ""
+        return hmac.compare_digest(got.strip(), f"Bearer {expected}")
+
+    def _deny(self) -> None:
+        self._send(401, {"error": "unauthorized",
+                         "details": ["нужен заголовок Authorization: Bearer <SOMA_TOKEN>"]})
+
+    def _quota_exceeded(self, who: str) -> bool:
+        """Квота на отправителя/получателя. Возвращает True, если лимит выбран."""
+        limit = int(os.environ.get("SOMA_QUOTA_PER_HOUR", "0") or 0)
+        if limit <= 0:
+            return False
+        now = time.time()
+        window = int(now // 3600)
+        counts = self.server.quota  # type: ignore[attr-defined]
+        key = f"{who}:{window}"
+        if counts.get(key, 0) >= limit:
+            return True
+        counts[key] = counts.get(key, 0) + 1
+        return False
 
     # ── ответы ────────────────────────────────────────────────
     def _send(self, code: int, payload: Any) -> None:
@@ -176,7 +216,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    MAX_BODY = 1_048_576  # 1 МиБ: конверт — это письмо, а не файл
+    DEFAULT_MAX_BODY = 1_048_576  # 1 МиБ: конверт — это письмо, а не файл
+
+    @property
+    def max_body(self) -> int:
+        """Лимит тела читается на каждый запрос: конфиг может измениться."""
+        try:
+            return int(os.environ.get("SOMA_MAX_BODY", str(self.DEFAULT_MAX_BODY)))
+        except ValueError:
+            return self.DEFAULT_MAX_BODY
 
     def _body(self) -> dict[str, Any]:
         raw_len = self.headers.get("Content-Length")
@@ -184,8 +232,9 @@ class Handler(BaseHTTPRequestHandler):
             length = int(raw_len or 0)
         except (TypeError, ValueError):
             raise ValueError("неверный Content-Length")
-        if length < 0 or length > self.MAX_BODY:
-            raise ValueError(f"размер тела вне границ (максимум {self.MAX_BODY})")
+        limit = self.max_body
+        if length < 0 or length > limit:
+            raise ValueError(f"размер тела вне границ (максимум {limit})")
         if not length:
             return {}
         try:
@@ -195,6 +244,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── маршруты ──────────────────────────────────────────────
     def do_GET(self) -> None:  # noqa: N802
+        if not self._auth_ok():
+            self._deny()
+            return
         u = urlparse(self.path)
         q = parse_qs(u.query)
         if u.path in ("/.well-known/agent-card.json", "/.well-known/agent.json", "/agents.json"):
@@ -232,6 +284,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not_found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._auth_ok():
+            self._deny()
+            return
         u = urlparse(self.path)
         try:
             body = self._body()
@@ -242,6 +297,10 @@ class Handler(BaseHTTPRequestHandler):
             env = Envelope.from_dict({k: v for k, v in body.items()
                                       if k in Envelope.__dataclass_fields__})
             client_sig = body.get("signature") if isinstance(body.get("signature"), dict) else None
+            if self._quota_exceeded(env.sender or "unknown"):
+                self._send(429, {"error": "quota_exceeded",
+                                 "details": [f"лимит отправки исчерпан"]})
+                return
             self._send(200, self.hub.send(env, sign_it=True, client_signature=client_sig))
         elif u.path == "/v1/claim":
             payment = body.get("payment") or self.headers.get("x-payment")
@@ -257,7 +316,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def make_server(hub: Hub | None = None, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
     handler = type("BoundHandler", (Handler,), {"hub": hub or Hub()})
-    return ThreadingHTTPServer((host, port), handler)
+    srv = ThreadingHTTPServer((host, port), handler)
+    srv.quota = {}  # type: ignore[attr-defined]
+    return srv
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, hub: Hub | None = None) -> None:

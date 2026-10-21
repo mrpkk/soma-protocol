@@ -144,8 +144,10 @@ GET  /v1/envelopes/{id}       envelope + signature verdict + history
 ```
 
 The reference transport has **no authentication** and binds `127.0.0.1`. It is a component to
-put behind your own gateway; a public deployment must add authentication, a body-size limit
-(the reference caps bodies at 1 MiB) and rate limiting.
+put behind your own gateway. A managed profile exists for public deployments:
+`SOMA_MANAGED=1` requires a bearer token, `SOMA_QUOTA_PER_HOUR` limits sends per sender per
+hour, `SOMA_MAX_BODY` caps the body (1 MiB by default). If the managed profile is on and no
+token is configured, every request is denied — a misconfiguration must not open the door.
 
 ### 3.2 MCP
 
