@@ -27,8 +27,30 @@ PROTOCOL = "soma/1"
 # ───────────────────────────────────────────────────────────── конверт
 
 #: Канонизация перед подписью: ключи сортируются, разделители фиксированы.
+def _normalize_numbers(value: Any) -> Any:
+    """Целые числа всегда целые: 3600.0 и 3600 — одно и то же тело.
+
+    Без этого подпись ломается от хранения: конверт с `ttl_s: 3600` попадает
+    в REAL-колонку и читается как `3600.0` — байты тела меняются, подпись не
+    сходится. Так же расходятся реализации на разных языках (JS отдаёт 3600,
+    Python после разбора — 3600.0).
+    """
+    if isinstance(value, bool) or value is None or isinstance(value, (str, int)):
+        return value
+    if isinstance(value, float):
+        if value.is_integer() and abs(value) < 2 ** 53:
+            return int(value)
+        return value
+    if isinstance(value, dict):
+        return {k: _normalize_numbers(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_numbers(v) for v in value]
+    return value
+
+
 def canonical(payload: Any) -> bytes:
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False,
+    """Каноническое тело: стабильный JSON (ключи по порядку, числа одного вида)."""
+    return json.dumps(_normalize_numbers(payload), sort_keys=True, ensure_ascii=False,
                       separators=(",", ":")).encode("utf-8")
 
 

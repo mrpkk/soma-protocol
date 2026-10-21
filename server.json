@@ -1,17 +1,11 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "lat.rta/soma",
-  "title": "soma — protocol for agent rhythm and vows",
-  "description": "Protocol for agent rhythm and vows: who promised what, and by when.",
+  "name": "io.github.mrpkk/soma-protocol",
+  "title": "Soma — open protocol for agent work",
+  "description": "Signed envelopes with token budget, mandate and price; conformance suite included.",
+  "version": "1.3.0",
   "repository": {
     "url": "https://github.com/mrpkk/soma-protocol",
     "source": "github"
-  },
-  "version": "0.1.0",
-  "remotes": [
-    {
-      "type": "streamable-http",
-      "url": "https://rta.lat/soma/mcp"
-    }
-  ]
+  }
 }

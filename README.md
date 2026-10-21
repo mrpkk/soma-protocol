@@ -31,7 +31,7 @@ soma inbox --agent research
 Or in Python:
 
 ```python
-from mitra import Envelope, Hub
+from soma import Envelope, Hub
 
 hub = Hub()
 env = Envelope(goal="verify the artifact", task="run the linter", to="verifier",
@@ -56,13 +56,13 @@ implementation** and a **conformance suite**. Not a platform, not a framework, n
 
 | Piece | What it is |
 |---|---|
-| `src/mitra/envelope.py` | the protocol core: envelope, canonicalization, signing, mandate rules, router, JSON Schema |
-| `src/mitra/memory.py` | three memory tiers — hot queue, warm facts (SQLite + FTS5), cold artifacts by hash |
-| `src/mitra/server.py` | HTTP transport (stdlib only) — `/v1/messages`, `/v1/inbox`, `/v1/claim`, `/v1/complete`, `/v1/route` |
-| `src/mitra/mcp_adapter.py` | MCP adapter — the same operations as MCP tools (`soma_send`, `soma_inbox`, `soma_claim`, `soma_complete`, `soma_route`, `soma_verify`, `soma_stats`) |
-| `src/mitra/payments.py` | usage metering (tokens/CPU/bytes/writes/calls) and the x402-compatible payment contract |
-| `src/mitra/anchors.py` | append-only history chain (hash-linked), with a seam for Arweave/IPFS/Nostr |
-| `src/mitra/registry.py` | the agent registry — a file, so it travels with the agent |
+| `src/soma/envelope.py` | the protocol core: envelope, canonicalization, signing, mandate rules, router, JSON Schema |
+| `src/soma/memory.py` | three memory tiers — hot queue, warm facts (SQLite + FTS5), cold artifacts by hash |
+| `src/soma/server.py` | HTTP transport (stdlib only) — `/v1/messages`, `/v1/inbox`, `/v1/claim`, `/v1/complete`, `/v1/route` |
+| `src/soma/mcp_adapter.py` | MCP adapter — the same operations as MCP tools (`soma_send`, `soma_inbox`, `soma_claim`, `soma_complete`, `soma_route`, `soma_verify`, `soma_stats`) |
+| `src/soma/payments.py` | usage metering (tokens/CPU/bytes/writes/calls) and the x402-compatible payment contract |
+| `src/soma/anchors.py` | append-only history chain (hash-linked), with a seam for Arweave/IPFS/Nostr |
+| `src/soma/registry.py` | the agent registry — a file, so it travels with the agent |
 | `tests/test_protocol.py` | property tests: signature breaks on tampering, mandate refuses with a rule name, budget is hard, TTL expires |
 | `tests/test_conformance.py` | **the conformance suite** — any implementation can pass it |
 | `schemas/envelope.schema.json` | the wire format (exported from the code — one source of truth) |
@@ -70,11 +70,19 @@ implementation** and a **conformance suite**. Not a platform, not a framework, n
 
 ## Build your own hub, prove it speaks Mitra
 
-The conformance suite is the point of this project. Point it at your implementation:
+The conformance suite is the point of this project. Two ways to run it:
 
 ```bash
+# 1) any MCP endpoint, including the language you wrote yours in
+python3 tools/check_conformance.py https://rta.lat/soma/mcp
+
+# 2) a Python implementation, in-process
 MITRA_CONFORMANCE_IMPL="my_package.hub:MyHubFactory" pytest tests/test_conformance.py -v
 ```
+
+A public demo node runs at **https://rta.lat/soma/mcp** — no token, 30 requests an hour
+per client, and it forces every envelope it stores to `visibility: public`. Nothing
+private lives there. Step-by-step walkthrough: [docs/IMPLEMENT.md](docs/IMPLEMENT.md).
 
 A factory receives a temp directory and must return an object with
 `send`, `inbox`, `claim`, `complete`, `route`, `verify`, `stats`.
@@ -89,7 +97,7 @@ Soma does not replace any of these — it carries envelopes between them:
 
 - **MCP** — an adapter exposes the same operations as MCP tools.
 - **A2A** — `agents.json` in this repo is an A2A Agent Card; envelopes map onto A2A tasks.
-- **x402** — the payment header contract is defined in `src/mitra/payments.py`.
+- **x402** — the payment header contract is defined in `src/soma/payments.py`.
 - **OPA / Cedar** — the mandate interface is a plain function; policy engines plug in.
 - **Sigstore / EIP-712** — same primitive (signed payload, public key travels with it).
 - **Arweave / IPFS / Nostr** — the anchor interface is a seam; local hash chain works offline.

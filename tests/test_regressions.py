@@ -212,3 +212,34 @@ def test_hub_accepts_client_signature_and_checks_registry(server):
            "public_key": pub, "signer": "client"}
     code, body = _post(server + "/v1/messages", env.to_dict() | {"signature": sig})
     assert code == 200 and body["ok"], body
+
+
+# ── R3: подпись не зависит от типа числа и переживает хранение ─────
+
+def test_canonical_makes_numbers_type_stable():
+    """3600 и 3600.0 — одно и то же тело (иначе JS и Python не сойдутся)."""
+    from soma.envelope import canonical
+    assert canonical({"ttl_s": 3600}) == canonical({"ttl_s": 3600.0})
+    assert canonical({"x": [1, 2.0, 3.5]}) == canonical({"x": [1.0, 2, 3.5]})
+    # bool — не число: True нельзя превращать в 1
+    assert canonical({"x": True}) != canonical({"x": 1})
+
+
+def test_signature_survives_int_ttl_through_storage(tmp_path):
+    """Конверт с целым ttl_s читается из базы с float — подпись обязана сойтись.
+
+    Регрессия: REAL-колонка возвращала 3600.0 там, где подписано 3600,
+    и любой, кто проверял конверт ПОСЛЕ работы узла, получал InvalidSignature.
+    """
+    from soma.envelope import Envelope, sign, verify
+    from soma.memory import Memory
+
+    mem = Memory(str(tmp_path / "r3.db"), str(tmp_path / "cold"))
+    env = Envelope(goal="g", task="t", to="verifier", sender="probe",
+                   token_budget=500, ttl_s=3600, visibility="shared")
+    sign(env)
+    assert verify(env)[0]
+    mem.put(env)
+    stored = Envelope.from_dict(mem.get(env.id))
+    ok, why = verify(stored)
+    assert ok, f"подпись не пережила хранение: {why}"

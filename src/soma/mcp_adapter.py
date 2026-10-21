@@ -60,14 +60,16 @@ def _forced_visibility() -> str:
 async def soma_send(goal: str, task: str, to: str = "*", sender: str = "mcp",
                      capability: list[str] | None = None, token_budget: int = 2000,
                      context_query: str = "", max_cost_usd: float | None = None,
-                     price_usdc: float | None = None, ttl_s: float = 3600,
+                     price_usdc: float | None = None, cost_usdc: float | None = None,
+                     ttl_s: float = 3600,
                      visibility: str = "private") -> str:
     mand = {"max_cost_usd": max_cost_usd} if max_cost_usd is not None else None
     vis = _forced_visibility() or visibility
     return _envelope(goal=goal, task=task, to=to, sender=sender,
                      capability=capability or [], token_budget=token_budget,
                      context_query=context_query, mandate=mand,
-                     price_usdc=price_usdc, ttl_s=ttl_s, visibility=vis)
+                     price_usdc=price_usdc, cost_usdc=cost_usdc,
+                     ttl_s=ttl_s, visibility=vis)
 
 
 @mcp.tool(name="soma_inbox",
@@ -77,9 +79,10 @@ async def soma_inbox(agent: str, limit: int = 10) -> str:
 
 
 @mcp.tool(name="soma_claim",
-          description="Забрать конверт из очереди (эксклюзивно) и получить контекст под бюджет.")
-async def soma_claim(id: str, agent: str) -> str:
-    return json.dumps(hub().claim(id, agent), ensure_ascii=False, default=str)
+          description="Забрать конверт из очереди (эксклюзивно) и получить контекст под бюджет. Если у работы назначена цена — нужна квитанция.")
+async def soma_claim(id: str, agent: str, payment: str = "") -> str:
+    return json.dumps(hub().claim(id, agent, payment=payment),
+                      ensure_ascii=False, default=str)
 
 
 @mcp.tool(name="soma_complete",

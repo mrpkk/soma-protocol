@@ -134,7 +134,8 @@ async def run(url: str) -> int:
                                                                                 "asset": "USDC"})})
                 rep.check("C8 работа с ценой требует оплаты",
                           no_pay.get("ok") is not True and with_pay.get("ok") is True,
-                          f"без оплаты: {str(no_pay.get('reason'))[:60]}")
+                          f"без оплаты: {str(no_pay.get('reason'))[:60]} | "
+                          f"с оплатой: {str(with_pay.get('reason'))[:60]}")
             else:
                 rep.check("C8 работа с ценой требует оплаты", False,
                           "не удалось отправить конверт с ценой")
