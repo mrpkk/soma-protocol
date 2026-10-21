@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from .envelope import Envelope, Mandate
@@ -28,7 +29,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--price-usdc", type=float, default=None)
     s.add_argument("--ttl", type=float, default=3600)
 
-    sub.add_parser("serve", help="поднять HTTP-хаб")
+    sv = sub.add_parser("serve", help="поднять HTTP-хаб")
+    sv.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
+    sv.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765") or 8765))
     k = sub.add_parser("keygen", help="создать ключ подписи Ed25519")
     k.add_argument("--path", default=None)
     sub.add_parser("stats", help="состояние")
@@ -62,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
                        mandate=Mandate(max_cost_usd=args.max_cost))
         print(json.dumps(hub.send(env), ensure_ascii=False))
     elif args.cmd == "serve":
-        serve()
+        serve(args.host, args.port)
     elif args.cmd == "keygen":
         from .envelope import generate_key
         print(json.dumps(generate_key(args.path), ensure_ascii=False, indent=2))

@@ -32,16 +32,21 @@ USER_AGENT = "soma/1.1.0"
 
 @dataclass
 class Peer:
-    """Узел-партнёр."""
+    """Узел-партнёр.
+
+    `token` — квитанция доступа к партнёру, если он закрыт токеном
+    (управляемый профиль Soma). Пусто — партнёр открыт.
+    """
 
     name: str
     url: str
     public_key: str | None = None
+    token: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {"name": self.name, "url": self.url, "public_key": self.public_key,
-                "metadata": self.metadata}
+                "has_token": bool(self.token), "metadata": self.metadata}
 
 
 def _post(url: str, payload: dict[str, Any], timeout: int = 20,
@@ -131,8 +136,11 @@ def push(envelope: Envelope, peers: list[Peer], signer: Any) -> dict[str, Any]:
     signed = sign_for_peer(envelope, signer)
     results = []
     for peer in peers:
+        headers = {}
+        if peer.token:
+            headers["Authorization"] = f"Bearer {peer.token}"
         code, body = _post(peer.url.rstrip("/") + "/v1/federate/inbox",
-                           {"envelope": signed, "from": peer.name})
+                           {"envelope": signed, "from": peer.name}, headers=headers)
         results.append({"peer": peer.name, "code": code, "ok": code == 200,
                         "detail": body if code != 200 else ""})
     return {"pushed": True, "visibility": visibility, "peers": results}

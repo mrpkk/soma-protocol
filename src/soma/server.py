@@ -91,8 +91,11 @@ class Hub:
         env = self.memory.get(env_id)
         if not env:
             return {"ok": False, "reason": "нет такого конверта"}
+        own = os.environ.get("SOMA_TOKEN", "")
         peer_objs = [Peer(name=p.get("name", "peer"), url=p.get("url", ""),
-                           public_key=p.get("public_key")) for p in peers if p.get("url")]
+                           public_key=p.get("public_key"),
+                           token=p.get("token") or own or None)
+                     for p in peers if p.get("url")]
         return federate_push(Envelope.from_dict(env), peer_objs, self.components.signer)
 
     def federate_receive(self, payload: dict[str, Any], from_peer: str = "") -> dict[str, Any]:
