@@ -1,0 +1,64 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.mrpkk/soma-protocol",
+  "description": "Soma — протокол коммуникации агентов: сообщение между агентами это конверт (цель, задача, бюджет токенов, мандат, цена, подпись). Память в три яруса с жёстким бюджетом и объявленной деградацией; роутер по capability, мандату и цене; отказ всегда с причиной; подписанные квитанции и репутация по фактам; перевозчики MCP, A2A и x402; федерация узлов с переносимой историей. Набор тестов соответствия: любая реализация может доказать совместимость.",
+  "status": "active",
+  "version": "1.2.0",
+  "repository": {
+    "url": "https://github.com/mrpkk/soma-protocol",
+    "source": "github",
+    "id": "1427584322"
+  },
+  "websiteUrl": "https://github.com/mrpkk/soma-protocol",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "soma-protocol",
+      "version": "1.2.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SOMA_SIGNING_KEY",
+          "description": "Путь к ключу Ed25519 для подписи конвертов",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SOMA_PLUGINS",
+          "description": "Плагины швов: module:factory через запятую",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    },
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "soma-protocol",
+      "version": "1.2.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "streamable-http",
+        "url": "https://rta.lat/hub/mcp"
+      },
+      "environmentVariables": [
+        {
+          "name": "SOMA_MANAGED",
+          "description": "1 — включить bearer-токен",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SOMA_TOKEN",
+          "description": "Токен доступа к хабу",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
