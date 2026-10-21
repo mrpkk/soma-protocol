@@ -94,6 +94,68 @@ Soma does not replace any of these — it carries envelopes between them:
 - **Sigstore / EIP-712** — same primitive (signed payload, public key travels with it).
 - **Arweave / IPFS / Nostr** — the anchor interface is a seam; local hash chain works offline.
 
+## What is open and what is not
+
+This is the whole point of the split, so it is written down plainly.
+
+| Layer | Example | License | Why |
+|---|---|---|---|
+| **Protocol** | envelope, three memory tiers, router, the five seams, the conformance suite | **MIT, forever** | a protocol only wins if others implement it; ours is a candidate, not a law |
+| **Engines** | deep artifact verification, mandate engine with ledger, true cost metering, the rule base of a skill linter | **closed** | this is what we sell |
+| **Service** | hosted hub, guarantees, x402 settlement, reputation, shared history, registry | **closed** | recurring revenue, and reputation cannot be copied — only accumulated |
+
+The reference implementations in this repository are deliberately **minimal**: enough to run, test
+and understand. They are not the engines. Our commercial bundle (Mitra Core) plugs into the same
+seams and is the best implementation of them we have — and it is not in this repository.
+
+> If you are reading this to decide whether to build on Soma: yes, build on it. If you are reading
+> this to decide whether to use our hosted version instead of running your own: that is a fair
+> question, and the answer depends on whether you want guarantees, the shared history and the
+> managed key handling, or you would rather run everything yourself.
+
+## Plugging your own engine
+
+The five seams are protocols (`soma/interfaces.py`): `Signer`, `MandateEvaluator`, `MemoryTier`,
+`Meter`, `Anchor`. A plugin is any object that satisfies them.
+
+```python
+# my_engine.py
+from soma.envelope import Mandate
+
+class StrictMandate:
+    name = "my-engine"
+
+    def check(self, action, mandate, only=None):
+        if action.get("payee") == "mallory":
+            return False, "payee: blocked by my engine"
+        return True, "ok"
+
+def components():
+    return {"mandate": StrictMandate()}
+```
+
+Load it two ways:
+
+```bash
+# 1) environment — for experiments and local runs
+SOMA_PLUGINS="my_engine:components" soma serve
+
+# 2) entry point — for a distributed package
+#    [project.entry-points."soma.plugins"]
+#    my_engine = "my_engine:components"
+pip install my-engine && soma serve
+```
+
+`GET /healthz` reports what is actually connected:
+
+```json
+{"components": {"signer": "ed25519", "mandate": "my-engine", "meter": "usage",
+                "memory": "Memory", "anchor": "LocalChain", "plugins": ["my-engine"]}}
+```
+
+A broken plugin is skipped, not fatal: the hub starts with the reference implementations and says
+so in `/healthz`.
+
 ## Trust, stated plainly
 
 - The reference HTTP transport has **no authentication** and binds `127.0.0.1`. Put it behind

@@ -24,10 +24,15 @@ dependencies = []
 sign = ["cryptography>=42"]          # Ed25519-подпись (без неё — HMAC-режим)
 schema = ["jsonschema>=4.20"]        # строгая проверка по схеме
 mcp = ["mcp>=2.0"]                   # MCP-адаптер
+engines = []                          # закрытые движки Mitra Core — ставятся из своего индекса
 dev = ["pytest>=8", "cryptography>=42", "jsonschema>=4.20"]
 
 [project.scripts]
 soma = "soma.cli:main"
+
+[project.entry-points."soma.plugins"]
+# Здесь регистрируют себя закрытые движки Mitra Core (attest, drift, agentpay, indra-memory).
+# Сами пакеты закрыты; в OSS попадает только точка входа, а не код движка.
 
 [project.urls]
 Homepage = "https://github.com/mrpkk/soma-protocol"

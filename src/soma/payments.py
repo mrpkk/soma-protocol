@@ -48,6 +48,20 @@ class Usage:
         return d
 
 
+class UsageMeter:
+    """Эталонный шов учёта: цена по фактическому расходу."""
+
+    name = "usage"
+
+    def __init__(self, rates: dict[str, float] | None = None):
+        self.rates = rates or dict(RATES)
+
+    def quote(self, usage: dict[str, Any]) -> dict[str, Any]:
+        u = Usage(**{k: v for k, v in (usage or {}).items()
+                      if k in Usage.__dataclass_fields__})
+        return {"currency": "USD", **u.as_dict()}
+
+
 def quote(usage: Usage) -> dict[str, Any]:
     """Цена по факту расхода. Никаких прайсовых таблиц."""
     return {"currency": "USD", **usage.as_dict()}

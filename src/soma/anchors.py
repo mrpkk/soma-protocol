@@ -27,6 +27,8 @@ class Anchor(Protocol):
 class LocalChain:
     """Append-only цепочка в файле. Хеш каждой записи включает хеш предыдущей."""
 
+    name = "file-chain"
+
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else Path.home() / ".soma" / "history.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)

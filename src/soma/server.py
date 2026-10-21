@@ -25,17 +25,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .envelope import (Envelope, check_mandate, route as route_envelope, sign, verify)
+from .components import Components, build_components
+from .envelope import Envelope, Mandate, route as route_envelope
 from .memory import Memory
 from .registry import Registry
 
 
 class Hub:
-    """Ядро хаба: память + реестр. Транспорт — снаружи."""
+    """Ядро хаба: компоненты (память, реестр, подпись, мандат, учёт, якорь).
 
-    def __init__(self, memory: Memory | None = None, registry: Registry | None = None):
-        self.memory = memory or Memory()
-        self.registry = registry or Registry()
+    Транспорт — снаружи. Любой компонент заменяется плагином; в OSS лежат
+    эталонные реализации, настоящие движки (Mitra Core) подключаются сверху.
+    """
+
+    def __init__(self, memory: Memory | None = None, registry: Registry | None = None,
+                 components: Components | None = None):
+        self.components = components or build_components(memory, registry)
+        self.memory = self.components.memory
+        self.registry = self.components.registry
 
     # ── операции ──────────────────────────────────────────────
     def send(self, env: Envelope, sign_it: bool = True,
@@ -57,7 +64,7 @@ class Hub:
                 return {"ok": False, "error": "bad_signature", "details": [why]}
         elif sign_it:
             try:
-                sign(env)
+                self.components.signer.sign(env)
             except RuntimeError as exc:
                 return {"ok": False, "error": "cannot_sign", "details": [str(exc)]}
         if not self.memory.put(env):
@@ -68,7 +75,7 @@ class Hub:
         """Проверить подпись конверта, сверив отправителя с реестром ключей."""
         env = Envelope.from_dict(envelope)
         expected = self.registry.public_key(env.sender)
-        return verify(env, expected_public_key=expected)
+        return self.components.signer.verify(env, expected_public_key=expected)
 
     def stats(self) -> dict[str, Any]:
         return self.memory.stats()
@@ -76,7 +83,7 @@ class Hub:
     def inbox(self, agent: str, limit: int = 10) -> list[dict[str, Any]]:
         out = []
         for env in self.memory.inbox(agent, limit):
-            ok, why = verify(Envelope.from_dict(env))
+            ok, why = self.verify(env)
             out.append({"envelope": env, "signature_ok": ok, "signature": why,
                         "context": self.memory.pack(env)})
         return out
@@ -97,15 +104,17 @@ class Hub:
         ok, sig_why = self.verify(env)
         if not ok:
             return {"ok": False, "reason": f"подпись не прошла: {sig_why}"}
+        # Оценщик зовётся ВСЕГДА, даже если в конверте нет мандата:
+        # движок с собственными правилами (Mitra Core) обязан уметь отказать
+        # и без явного мандата. Эталон без мандата просто пропускает.
         mand = env.get("mandate") or None
-        if mand:
-            from .envelope import Mandate
-            m = Mandate(**{k: v for k, v in mand.items()
-                           if k in Mandate.__dataclass_fields__})
-            allowed, rule_why = check_mandate({"payee": env.get("to"), "calls": 1}, m,
-                                              only=["payee", "calls", "validity_window"])
-            if not allowed:
-                return {"ok": False, "reason": f"мандат отклонил выдачу: {rule_why}"}
+        m = Mandate(**{k: v for k, v in (mand or {}).items()
+                       if k in Mandate.__dataclass_fields__}) if mand else None
+        allowed, rule_why = self.components.mandate.check(
+            {"payee": env.get("to"), "calls": 1}, m,
+            only=["payee", "calls", "validity_window"])
+        if not allowed:
+            return {"ok": False, "reason": f"мандат отклонил выдачу: {rule_why}"}
         claimed, why = self.memory.claim(env_id, agent)
         if claimed is None:
             return {"ok": False, "reason": why}
@@ -116,13 +125,12 @@ class Hub:
         env = self.memory.get(env_id)
         if env and isinstance(result, dict) and "cost_usd" in result:
             mand = env.get("mandate") or None
-            if mand:
-                from .envelope import Mandate
-                m = Mandate(**{k: v for k, v in mand.items()
-                               if k in Mandate.__dataclass_fields__})
-                allowed, why = check_mandate({"amount": result["cost_usd"]}, m, only=["amount"])
-                if not allowed:
-                    return {"ok": False, "id": env_id, "reason": f"мандат отклонил результат: {why}"}
+            m = Mandate(**{k: v for k, v in (mand or {}).items()
+                           if k in Mandate.__dataclass_fields__}) if mand else None
+            allowed, why = self.components.mandate.check(
+                {"amount": result.get("cost_usd", 0.0)}, m, only=["amount"])
+            if not allowed:
+                return {"ok": False, "id": env_id, "reason": f"мандат отклонил результат: {why}"}
         ok = self.memory.complete(env_id, result, agent)
         return {"ok": ok, "id": env_id, "reason": "ok" if ok else "конверт не найден или занят другим"}
 
@@ -182,6 +190,7 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         if u.path == "/healthz":
             self._send(200, {"ok": True, "protocol": "soma/1", "time": time.time(),
+                             "components": self.hub.components.describe(),
                              "stats": self.hub.memory.stats()})
         elif u.path == "/v1/agents":
             self._send(200, {"agents": self.hub.registry.agents})

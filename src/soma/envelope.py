@@ -114,9 +114,9 @@ class Envelope:
 
 # ───────────────────────────────────────────────────────────── подпись
 
-def _ed25519_key() -> bytes | None:
-    path = os.environ.get("SOMA_SIGNING_KEY")
-    for candidate in (path, os.path.expanduser("~/.local/share/soma/signing.key")):
+def _ed25519_key(path: str | Path | None = None) -> bytes | None:
+    env = os.environ.get("SOMA_SIGNING_KEY")
+    for candidate in (path, env, os.path.expanduser("~/.local/share/soma/signing.key")):
         if candidate and os.path.exists(candidate):
             with open(candidate, "rb") as f:
                 return f.read()
@@ -142,13 +142,80 @@ def generate_key(path: str | Path | None = None) -> dict[str, str]:
     return {"private_key_path": str(target),
             "public_key": base64.b64encode(priv.public_key().public_bytes_raw()).decode()}
 
-def sign(envelope: Envelope, key: bytes | None = None) -> Envelope:
-    """Подписать конверт.
+class Ed25519Signer:
+    """Эталонный шов подписи: Ed25519, при отсутствии ключа — HMAC.
 
-    Ed25519 (предпочтительно — публичный ключ едет вместе с подписью, проверка
-    не требует ни сервиса, ни секрета). Если Ed25519 недоступен — HMAC-SHA256,
-    который тоже можно проверить, но нужен общий секрет.
+    Публичный ключ едет внутри конверта, поэтому проверка не требует ни
+    сервиса, ни секрета. Свой шов подписи подключается плагином.
     """
+
+    name = "ed25519"
+
+    def __init__(self, key: bytes | None = None, path: str | Path | None = None):
+        self.key = key
+        self.path = path
+
+    def sign(self, envelope: Envelope) -> dict[str, Any]:
+        payload = canonical(envelope.payload())
+        priv_bytes = self.key or _ed25519_key(self.path)
+        if priv_bytes is not None:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                Ed25519PrivateKey,
+            )
+            priv = Ed25519PrivateKey.from_private_bytes(priv_bytes)
+            sig = priv.sign(payload)
+            pub = priv.public_key().public_bytes_raw()
+            envelope.signature = {
+                "algorithm": "ed25519",
+                "signature": base64.b64encode(sig).decode(),
+                "public_key": base64.b64encode(pub).decode(),
+                "signer": "hub",
+            }
+            return envelope.signature
+        secret = os.environ.get("SOMA_SECRET")
+        if not secret:
+            raise RuntimeError(
+                "нечем подписать: нет ключа Ed25519 (SOMA_SIGNING_KEY) и нет SOMA_SECRET")
+        mac = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        envelope.signature = {"algorithm": "hmac-sha256", "signature": mac, "signer": "hub"}
+        return envelope.signature
+
+    def verify(self, envelope: Envelope,
+               expected_public_key: str | None = None) -> tuple[bool, str]:
+        sig = envelope.signature or {}
+        algo = sig.get("algorithm")
+        if not algo or algo == "none":
+            return False, "конверт не подписан"
+        payload = canonical(envelope.payload())
+        if algo == "hmac-sha256":
+            secret = os.environ.get("SOMA_SECRET")
+            if not secret:
+                return False, "нет общего секрета для проверки HMAC"
+            expect = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+            ok = hmac.compare_digest(expect, sig.get("signature", ""))
+            return ok, "ok" if ok else "подпись не сошлась"
+        if algo == "ed25519":
+            if expected_public_key and sig.get("signer") == "client" \
+                    and sig.get("public_key") != expected_public_key:
+                return False, "ключ не совпадает с ключом отправителя из реестра"
+            try:
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                    Ed25519PublicKey,
+                )
+                Ed25519PublicKey.from_public_bytes(
+                    base64.b64decode(sig["public_key"])).verify(
+                    base64.b64decode(sig["signature"]), payload)
+                return True, "ok"
+            except Exception as exc:
+                return False, f"подпись не сошлась ({type(exc).__name__})"
+        return False, f"неизвестный алгоритм: {algo}"
+
+
+_DEFAULT_SIGNER = Ed25519Signer()
+
+
+def sign(envelope: Envelope, key: bytes | None = None) -> Envelope:
+    """Подписать конверт эталонным шовом (совместимость с прежним API)."""
     payload = canonical(envelope.payload())
     priv_bytes = key or _ed25519_key()
     if priv_bytes is not None:
@@ -241,6 +308,16 @@ def _num(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         raise ValueError(f"значение не число: {value!r}")
+
+
+class RuleMandate:
+    """Эталонный шов мандата: правила в фиксированном порядке, отказ по умолчанию."""
+
+    name = "rules"
+
+    def check(self, action: dict[str, Any], mandate: Mandate | None,
+              only: list[str] | None = None) -> tuple[bool, str]:
+        return check_mandate(action, mandate, only)
 
 
 def check_mandate(action: dict[str, Any], mandate: Mandate | None,
