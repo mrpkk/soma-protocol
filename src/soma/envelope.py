@@ -66,6 +66,7 @@ class Envelope:
     price_usdc: float | None = None      # максимум, что готов заплатить отправитель
     cost_usdc: float | None = None       # сколько стоит выполнение (запрос получателя)
     ttl_s: float = 3600.0
+    visibility: str = "private"   # private | shared | public: что можно отдать другим узлам
     id: str = ""
     created_at: float = 0.0
     signature: dict[str, Any] = field(default_factory=dict)
@@ -401,6 +402,7 @@ _ENVELOPE_SCHEMA: dict[str, Any] = {
         "id": {"type": "string", "minLength": 4, "maxLength": 64},
         "created_at": {"type": "number"},
         "ttl_s": {"type": "number", "exclusiveMinimum": 0},
+        "visibility": {"type": "string", "enum": ["private", "shared", "public"]},
         "goal": {"type": "string", "minLength": 1, "maxLength": 2000},
         "task": {"type": "string", "minLength": 1, "maxLength": 20000},
         "sender": {"type": "string"},

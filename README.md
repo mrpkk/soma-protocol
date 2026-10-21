@@ -164,6 +164,15 @@ executor signs a **receipt**; the hub verifies it and counts. Actions refused by
 counted as breaches. Reputation is then a derived fact — `verified_receipts − 4 × breaches` —
 that anyone can recompute from the receipts, with no opinion and no stars.
 
+## Two nodes, one protocol
+
+Nodes can share work and history. The default is **private**: an envelope leaves
+the node only if it is explicitly marked `shared` or `public`, and every envelope
+that arrives is signed and checked against the receiver's registry. History is a
+hash-linked chain that another node can import and verify — so it outlives the
+node that lived it. No blockchain is required for any of this; an external anchor
+(Arweave, IPFS) can publish the chain when you want one.
+
 ## Server profile
 
 By default the reference transport is **local**: no authentication, binds `127.0.0.1` — a

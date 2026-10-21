@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS envelopes (
     id TEXT PRIMARY KEY, created_at REAL NOT NULL, ttl_s REAL NOT NULL,
     sender TEXT, recipient TEXT, goal TEXT, task TEXT, capability TEXT,
     token_budget INTEGER, context_query TEXT, cold_refs TEXT,
-    mandate TEXT, price_usdc REAL, cost_usdc REAL, status TEXT, claimed_by TEXT,
+    mandate TEXT, price_usdc REAL, cost_usdc REAL, visibility TEXT DEFAULT 'private',
+    status TEXT, claimed_by TEXT,
     claimed_at REAL, result TEXT, signature TEXT, routing TEXT,
     assigned_to TEXT DEFAULT '');
 CREATE INDEX IF NOT EXISTS ix_env ON envelopes(status, created_at);
@@ -90,7 +91,8 @@ class Memory:
         """Мягкая миграция: добавить недостающие колонки, не теряя данные."""
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(envelopes)").fetchall()}
         for name, ddl in (("assigned_to", "assigned_to TEXT DEFAULT ''"),
-                          ("cost_usdc", "cost_usdc REAL")):
+                          ("cost_usdc", "cost_usdc REAL"),
+                          ("visibility", "visibility TEXT DEFAULT 'private'")):
             if name not in cols:
                 try:
                     self.conn.execute(f"ALTER TABLE envelopes ADD COLUMN {ddl}")
@@ -110,13 +112,13 @@ class Memory:
             self.conn.execute(
                 "INSERT INTO envelopes(id, created_at, ttl_s, sender, recipient,"
             " goal, task, capability, token_budget, context_query, cold_refs, mandate,"
-            " price_usdc, cost_usdc, status, claimed_by, claimed_at, result, signature, routing)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " price_usdc, cost_usdc, visibility, status, claimed_by, claimed_at, result,"
+            " signature, routing) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (d["id"], d["created_at"], d["ttl_s"], d["sender"], d.get("to", "*"), d["goal"],
              d["task"], json.dumps(d.get("capability", [])), d.get("token_budget", 2000),
              d.get("context_query", ""), json.dumps(d.get("cold_refs", [])),
              json.dumps(d.get("mandate") or {}), d.get("price_usdc"), d.get("cost_usdc"),
-             d.get("status", "queued"),
+             d.get("visibility", "private"), d.get("status", "queued"),
              None, None, json.dumps(d.get("result")) if d.get("result") else None,
                  json.dumps(d.get("signature", {})), json.dumps(d.get("routing", {}))))
         except sqlite3.IntegrityError:
@@ -197,6 +199,14 @@ class Memory:
             self.conn.commit()
             return True
 
+    def outbox(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Конверты, которые узел сам разрешил отдать другим."""
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT * FROM envelopes WHERE visibility IN ('shared','public')"
+                " ORDER BY created_at LIMIT ?", (limit,)).fetchall()
+            return [self._to_env(r) for r in rows]
+
     def get(self, env_id: str) -> dict[str, Any] | None:
         with self.lock:
             row = self._row(env_id)
@@ -225,6 +235,7 @@ class Memory:
             "cold_refs": json.loads(row["cold_refs"] or "[]"),
             "mandate": json.loads(row["mandate"] or "{}") or None,
             "price_usdc": row["price_usdc"], "cost_usdc": row["cost_usdc"],
+            "visibility": row["visibility"] or "private",
             "status": row["status"],
             "claimed_by": row["claimed_by"], "claimed_at": row["claimed_at"],
             "result": json.loads(row["result"]) if row["result"] else None,

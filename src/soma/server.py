@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .components import Components, build_components
+from .federation import Peer, export_history, import_history, push as federate_push  # noqa: E402
 from .reputation import ReputationStore
 from .envelope import Envelope, Mandate, route as route_envelope
 from .memory import Memory
@@ -83,6 +84,43 @@ class Hub:
 
     def stats(self) -> dict[str, Any]:
         return self.memory.stats()
+
+    # ── федерация ───────────────────────────────────────────
+    def federate_push(self, env_id: str, peers: list[dict[str, Any]]) -> dict[str, Any]:
+        """Разослать конверт партнёрам. Приватный — не уйдёт никуда."""
+        env = self.memory.get(env_id)
+        if not env:
+            return {"ok": False, "reason": "нет такого конверта"}
+        peer_objs = [Peer(name=p.get("name", "peer"), url=p.get("url", ""),
+                           public_key=p.get("public_key")) for p in peers if p.get("url")]
+        return federate_push(Envelope.from_dict(env), peer_objs, self.components.signer)
+
+    def federate_receive(self, payload: dict[str, Any], from_peer: str = "") -> dict[str, Any]:
+        """Принять конверт от узла-партнёра: подпись проверяется по нашему реестру."""
+        from .federation import verify_from_peer
+        sender = (payload.get("envelope") or {}).get("sender") or from_peer
+        expected = self.registry.public_key(sender) if sender else None
+        ok, why = verify_from_peer(payload.get("envelope") or {}, expected)
+        if not ok:
+            return {"ok": False, "reason": why}
+        env = Envelope.from_dict(payload["envelope"])
+        if (env.visibility or "private") == "private":
+            return {"ok": False, "reason": "конверт приватный — принять нельзя"}
+        stored = self.memory.put(env)
+        return {"ok": stored, "id": env.id, "from": sender,
+                "reason": "ok" if stored else "конверт с таким id уже есть"}
+
+    def federate_outbox(self) -> dict[str, Any]:
+        """Что мы готовы отдать другим узлам."""
+        return {"envelopes": self.memory.outbox()}
+
+    def history_export(self) -> dict[str, Any]:
+        return export_history(self.memory.chain)
+
+    def history_import(self, exported: dict[str, Any]) -> dict[str, Any]:
+        """Принять чужую цепочку истории и проверить её непрерывность."""
+        ok, why = import_history(exported, self.memory.chain)
+        return {"ok": ok, "reason": why}
 
     def inbox(self, agent: str, limit: int = 10) -> list[dict[str, Any]]:
         out = []
@@ -283,6 +321,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "bad_request", "details": ["нужен параметр agent"]})
                 return
             self._send(200, {"agent": agent, "nonce": self.hub.registry.issue_nonce(agent)})
+        elif u.path == "/v1/federate/outbox":
+            self._send(200, self.hub.federate_outbox())
+        elif u.path == "/v1/federate/pull":
+            peer = (q.get("peer") or [""])[0]
+            from .federation import pull
+            code, body = pull(peer)
+            self._send(200, {"peer": peer, "code": code, "body": body})
+        elif u.path == "/v1/history":
+            self._send(200, self.hub.history_export())
         elif u.path == "/v1/reputation":
             agent = (q.get("agent") or [""])[0]
             if agent:
@@ -336,6 +383,13 @@ class Handler(BaseHTTPRequestHandler):
             receipt = body.get("receipt") if isinstance(body.get("receipt"), dict) else None
             self._send(200, self.hub.complete(body.get("id", ""), body.get("result") or {},
                                                body.get("agent"), receipt))
+        elif u.path == "/v1/federate/push":
+            self._send(200, self.hub.federate_push(body.get("id", ""), body.get("peers") or []))
+        elif u.path == "/v1/federate/inbox":
+            self._send(200, self.hub.federate_receive(body, body.get("from", "")))
+        elif u.path == "/v1/history":
+            ok, why = import_history(body, self.hub.memory.chain)
+            self._send(200, {"ok": ok, "reason": why})
         elif u.path == "/v1/agents":
             ok, why = self.hub.registry.register(
                 agent=body.get("agent", ""), public_key=body.get("public_key", ""),

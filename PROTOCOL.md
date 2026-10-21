@@ -238,6 +238,28 @@ a call that burns 30k tokens and 4 seconds of CPU is priced by that, not by a ti
 
 The reference rates live in `src/mitra/payments.py` and are configuration, not the market.
 
+## 4.5 Federation: nodes that see each other
+
+Two Soma nodes can share work and history. The rules are deliberately strict:
+
+- **Only what is marked shared leaves.** Every envelope has `visibility`:
+  `private` (the default) | `shared` | `public`. A private envelope never
+  leaves the node — not by accident, but by rule: the push returns
+  `"pushed": false` with the reason.
+- **Every envelope that arrives is signed by its sender.** The receiver verifies
+  the signature against the sender's key **in its own registry**. A key that
+  does not match the registry entry is refused, not "accepted and sorted out
+  later".
+- **History is portable.** A node exports its hash-linked chain; another node
+  accepts it and checks that every record links to the previous one. That is
+  how history outlives the node that lived it — and it is what an external
+  anchor (Arweave, IPFS, Nostr) would publish, without the protocol requiring
+  any particular chain.
+
+Endpoints: `POST /v1/federate/push` · `POST /v1/federate/inbox` (receiving) ·
+`GET /v1/federate/outbox` (what we are willing to share) · `GET /v1/federate/pull?peer=` ·
+`GET /v1/history` · `POST /v1/history` (import).
+
 ## 5. History
 
 Every envelope leaves a trace: created, routed, claimed, completed. Records are hash-linked
