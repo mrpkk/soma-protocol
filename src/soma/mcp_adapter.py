@@ -109,6 +109,11 @@ async def soma_stats() -> str:
     return json.dumps(hub().memory.stats(), ensure_ascii=False, indent=2)
 
 
+
+_PRIVACY = '# Privacy — soma\n\nsoma is a protocol for obligations between agents: who promised what, to whom,\nby when. That sentence is the privacy policy.\n\n## What is stored\n\n- **Envelopes** — the promise itself: sender, recipient, what was promised, the\n  deadline, the status. This is the product: an obligation you cannot store\n  cannot be kept.\n- **Request counters** — how many calls per tool per day.\n- **The rate limiter** keeps your client address in memory for one hour. It is\n  not written to disk.\n\n## What is not stored\n\n- your prompts, your model output, your files;\n- anything about your machine;\n- IP addresses in persistent form.\n\n## Who can read an envelope\n\nThe envelope exists so that the other side can act on it. It is readable by the\nsender, the recipient and the node that routes it. Do not put secrets in an\nenvelope: it is a record of an obligation, not a vault.\n\n## Deletion and questions\n\nOpen an issue at https://github.com/mrpkk/soma-protocol/issues. Envelopes are\nremoved on request; counters are not personal and are kept as totals.\n'
+
+_LLMS_INSTALL = '# soma — install\n\nRemote MCP server (streamable HTTP). No key, no account.\n\n```json\n{"mcpServers": {"soma": {"url": "https://rta.lat/soma/mcp"}}}\n```\n\nTools: `soma_send` — отправить поручение, `soma_inbox` — входящие, `soma_claim` —\nвзять в работу, `soma_complete` — закрыть с доказательством, `soma_route` —\nмаршрут конверта, `soma_verify` — проверить выполнение, `soma_stats` — состояние узла.\n\nEndpoint: `https://rta.lat/soma/mcp` · Privacy: `https://rta.lat/soma/privacy` ·\nSource: https://github.com/mrpkk/soma-protocol\n'
+
 def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
     """ASGI-приложение MCP: transport-security и управляемый профиль."""
     import hmac
@@ -123,6 +128,29 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
         transport_security=TransportSecuritySettings(
             allowed_hosts=["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*",
                            "rta.lat", "*.rta.lat"]))
+
+    # /privacy и /llms-install.md: чек-лист каталогов MCP отвергает сервер,
+    # у которого политика отдаёт 404 (см. attest/docs/MCP-CATALOG-CHECKLIST.md).
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+
+    prefix = http_path.rsplit("/", 1)[0]
+
+    async def _privacy(request):
+        return PlainTextResponse(_PRIVACY, media_type="text/plain; charset=utf-8")
+
+    async def _llms(request):
+        return PlainTextResponse(_LLMS_INSTALL, media_type="text/plain; charset=utf-8")
+
+    async def _health(request):
+        return JSONResponse({"ok": True, "service": "soma", "mcp_path": http_path})
+
+    for _p in ("/health", prefix + "/health"):
+        app.router.routes.insert(0, Route(_p, _health))
+    for _p in ("/privacy", prefix + "/privacy"):
+        app.router.routes.insert(0, Route(_p, _privacy))
+    for _p in ("/llms-install.md", prefix + "/llms-install.md"):
+        app.router.routes.insert(0, Route(_p, _llms))
 
     # Управляемый профиль: обязательный bearer-токен.
     # Токен не настроен — значит вход закрыт (ошибка конфигурации не открывает дверь).
