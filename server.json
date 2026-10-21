@@ -1,29 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.mrpkk/soma-protocol",
-  "description": "Agent protocol: an envelope with budget, mandate and signature; memory, reputation and federation.",
-  "status": "active",
-  "version": "1.2.0",
+  "name": "lat.rta/soma",
+  "title": "soma — protocol for agent rhythm and vows",
+  "description": "Protocol for agent rhythm and vows: who promised what, and by when.",
   "repository": {
     "url": "https://github.com/mrpkk/soma-protocol",
-    "source": "github",
-    "id": "1427584322"
+    "source": "github"
   },
-  "websiteUrl": "https://github.com/mrpkk/soma-protocol",
-  "title": "Soma",
+  "version": "0.1.0",
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://rta.lat/hub/mcp"
-    }
-  ],
-  "icons": [
-    {
-      "src": "https://raw.githubusercontent.com/mrpkk/soma-protocol/main/docs/icon.png",
-      "mimeType": "image/png",
-      "sizes": [
-        "512x512"
-      ]
+      "url": "https://rta.lat/soma/mcp"
     }
   ]
 }
