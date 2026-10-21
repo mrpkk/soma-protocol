@@ -196,6 +196,40 @@ without `metadata.soma` — a foreign task is not silently treated as ours.
 **The protocol fixes the contract, not the chain.** Settlement is a transport concern; a
 deployment chooses Base, Solana or another rail.
 
+## 3.6 Registry, KYA and reputation
+
+**Registry.** A file of agents: name, capabilities, price per call, public key. It is a file, not
+a database, so it travels with the agent and can be read by eye.
+
+**KYA — proof of key.** A new agent does not get in by writing its key into the registry: the hub
+issues a one-time nonce, the agent signs it with the key it claims, and only a signature that
+verifies against that key opens the door. A foreign key in the registry is therefore impossible —
+and the nonce is single-use.
+
+**Receipts.** When work is finished, the executor signs a receipt:
+
+```json
+{"payload": {"agent": "worker", "envelope_id": "…", "result_hash": "sha256:…", "ts": 0},
+ "algorithm": "ed25519", "signature": "…", "public_key": "…"}
+```
+
+The hub verifies the signature against the registry key and counts it. An unsigned or unverified
+receipt is **not** counted — there is no credit for a claim without a proof.
+
+**Breaches.** An action refused by a mandate is recorded as a breach against the agent that
+attempted it, with the rule that fired. Breaches cost four successes in the weight.
+
+**Reputation** is therefore a derived fact, not an opinion:
+
+| Field | Meaning |
+|---|---|
+| `verified_receipts` | count of receipts whose signature verified |
+| `breaches` | count of mandate refusals |
+| `weight` | `verified_receipts − 4 × breaches` |
+| `trust` | `unknown` (no facts) · `observed` · `established` (10+ verified, no breaches) · `breached` (weight ≤ 0) |
+
+Anyone can recompute it from the receipts; nothing here depends on our word.
+
 ## 4. Money: measured, not listed
 
 `Usage` meters what actually happened — `tokens`, `cpu_seconds`, `bytes_out`, `storage_writes`,

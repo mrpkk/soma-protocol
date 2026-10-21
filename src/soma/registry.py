@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,68 @@ class Registry:
 
     def get(self, name: str) -> dict[str, Any] | None:
         return self.agents.get(name)
+
+    # ── KYA: агент доказывает, что ключ его ───────────────────
+    def issue_nonce(self, agent: str) -> str:
+        """Выдать одноразовый нонс: агент подписывает его своим ключом."""
+        import os
+        import secrets
+        pending = self.path.with_suffix(".pending.json")
+        data: dict[str, str] = {}
+        if pending.exists():
+            try:
+                data = json.loads(pending.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        nonce = secrets.token_hex(16)
+        data[agent] = nonce
+        pending.parent.mkdir(parents=True, exist_ok=True)
+        pending.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return nonce
+
+    def _take_nonce(self, agent: str) -> str | None:
+        pending = self.path.with_suffix(".pending.json")
+        if not pending.exists():
+            return None
+        try:
+            data = json.loads(pending.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        nonce = data.pop(agent, None)
+        pending.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return nonce
+
+    def register(self, agent: str, public_key: str, capabilities: list[str] | None = None,
+                 cost_per_call: float = 0.0, proof: str | None = None,
+                 metadata: dict[str, Any] | None = None) -> tuple[bool, str]:
+        """Зарегистрировать внешнего агента.
+
+        Требуется доказательство владения ключом: подпись одноразового нонса
+        тем самым ключом, который агент заявляет. Без этого в реестр нельзя
+        попасть — иначе в реестре можно было бы написать чужой ключ.
+        """
+        import base64
+        nonce = self._take_nonce(agent)
+        if not nonce:
+            return False, "нет нонса для этого агента (запросите его)"
+        if not proof:
+            return False, "нет доказательства владения ключом"
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key)).verify(
+                base64.b64decode(proof), nonce.encode("utf-8"))
+        except Exception as exc:
+            return False, f"доказательство не сошлось ({type(exc).__name__})"
+        self.agents[agent] = {
+            "capabilities": list(capabilities or []),
+            "cost_per_call": float(cost_per_call),
+            "public_key": public_key,
+            "registered_at": time.time(),
+            "external": True,
+            "metadata": metadata or {},
+        }
+        self.save()
+        return True, "ok"
 
     def public_key(self, agent: str) -> str | None:
         """Публичный ключ агента из реестра (если заведён).

@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .components import Components, build_components
+from .reputation import ReputationStore
 from .envelope import Envelope, Mandate, route as route_envelope
 from .memory import Memory
 from .registry import Registry
@@ -40,10 +41,12 @@ class Hub:
     """
 
     def __init__(self, memory: Memory | None = None, registry: Registry | None = None,
-                 components: Components | None = None):
+                 components: Components | None = None,
+                 reputation: ReputationStore | None = None):
         self.components = components or build_components(memory, registry)
         self.memory = self.components.memory
         self.registry = self.components.registry
+        self.reputation = reputation or ReputationStore()
 
     # ── операции ──────────────────────────────────────────────
     def send(self, env: Envelope, sign_it: bool = True,
@@ -124,13 +127,16 @@ class Hub:
             {"payee": env.get("to"), "calls": 1}, m,
             only=["payee", "calls", "validity_window"])
         if not allowed:
+            self.reputation.record_breach(agent, env_id, rule_why.split(":")[0],
+                                          {"rule": rule_why})
             return {"ok": False, "reason": f"мандат отклонил выдачу: {rule_why}"}
         claimed, why = self.memory.claim(env_id, agent)
         if claimed is None:
             return {"ok": False, "reason": why}
         return {"ok": True, "envelope": claimed, "context": self.memory.pack(claimed)}
 
-    def complete(self, env_id: str, result: dict[str, Any], agent: str | None = None) -> dict[str, Any]:
+    def complete(self, env_id: str, result: dict[str, Any], agent: str | None = None,
+                 receipt: dict[str, Any] | None = None) -> dict[str, Any]:
         """Закрыть конверт результатом. Фактическая стоимость сверяется с мандатом."""
         env = self.memory.get(env_id)
         if env and isinstance(result, dict) and "cost_usd" in result:
@@ -142,7 +148,15 @@ class Hub:
             if not allowed:
                 return {"ok": False, "id": env_id, "reason": f"мандат отклонил результат: {why}"}
         ok = self.memory.complete(env_id, result, agent)
-        return {"ok": ok, "id": env_id, "reason": "ok" if ok else "конверт не найден или занят другим"}
+        if ok and receipt and agent:
+            expected = self.registry.public_key(agent)
+            good, why = self.reputation.record_receipt(receipt, expected)
+            if not good:
+                return {"ok": True, "id": env_id, "reason": "ok",
+                        "receipt": "не засчитана: " + why,
+                        "reputation": self.reputation.score(agent)}
+        return {"ok": ok, "id": env_id, "reason": "ok" if ok else "конверт не найден или занят другим",
+                "reputation": self.reputation.score(agent) if agent else None}
 
     def route(self, env_id: str) -> dict[str, Any]:
         env = self.memory.get(env_id)
@@ -263,6 +277,19 @@ class Handler(BaseHTTPRequestHandler):
                              "stats": self.hub.memory.stats()})
         elif u.path == "/v1/agents":
             self._send(200, {"agents": self.hub.registry.agents})
+        elif u.path == "/v1/agents/nonce":
+            agent = (q.get("agent") or [""])[0]
+            if not agent:
+                self._send(400, {"error": "bad_request", "details": ["нужен параметр agent"]})
+                return
+            self._send(200, {"agent": agent, "nonce": self.hub.registry.issue_nonce(agent)})
+        elif u.path == "/v1/reputation":
+            agent = (q.get("agent") or [""])[0]
+            if agent:
+                self._send(200, self.hub.reputation.score(agent))
+            else:
+                self._send(200, {"agents": {a: self.hub.reputation.score(a)
+                                           for a in self.hub.reputation.agents()}})
         elif u.path == "/v1/inbox":
             agent = (q.get("agent") or [""])[0]
             try:
@@ -306,8 +333,16 @@ class Handler(BaseHTTPRequestHandler):
             payment = body.get("payment") or self.headers.get("x-payment")
             self._send(200, self.hub.claim(body.get("id", ""), body.get("agent", ""), payment))
         elif u.path == "/v1/complete":
+            receipt = body.get("receipt") if isinstance(body.get("receipt"), dict) else None
             self._send(200, self.hub.complete(body.get("id", ""), body.get("result") or {},
-                                               body.get("agent")))
+                                               body.get("agent"), receipt))
+        elif u.path == "/v1/agents":
+            ok, why = self.hub.registry.register(
+                agent=body.get("agent", ""), public_key=body.get("public_key", ""),
+                capabilities=body.get("capabilities") or [],
+                cost_per_call=float(body.get("cost_per_call", 0.0) or 0.0),
+                proof=body.get("proof"), metadata=body.get("metadata"))
+            self._send(200 if ok else 400, {"ok": ok, "reason": why})
         elif u.path == "/v1/route":
             self._send(200, self.hub.route(body.get("id", "")))
         else:

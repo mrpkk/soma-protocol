@@ -156,6 +156,14 @@ pip install my-engine && soma serve
 A broken plugin is skipped, not fatal: the hub starts with the reference implementations and says
 so in `/healthz`.
 
+## Who is who, and why it matters
+
+The registry is a file. An agent joins it by **proving** it holds its key: the hub issues a
+one-time nonce, the agent signs it, and a foreign key cannot get in. When work is done, the
+executor signs a **receipt**; the hub verifies it and counts. Actions refused by a mandate are
+counted as breaches. Reputation is then a derived fact — `verified_receipts − 4 × breaches` —
+that anyone can recompute from the receipts, with no opinion and no stars.
+
 ## Server profile
 
 By default the reference transport is **local**: no authentication, binds `127.0.0.1` — a
