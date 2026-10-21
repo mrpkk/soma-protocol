@@ -67,6 +67,43 @@ def quote(usage: Usage) -> dict[str, Any]:
     return {"currency": "USD", **usage.as_dict()}
 
 
+def check_receipt(raw: str | dict | None, expected_usdc: float,
+                  payee: str | None = None, asset: str = "USDC") -> tuple[bool, str]:
+    """Проверить квитанцию об оплате.
+
+    Формат квитанции (наша, простая и проверяемая):
+        {"amount": 0.005, "asset": "USDC", "payee": "0x…", "network": "eip155:8453",
+         "signature": "…"}
+
+    Проверяется сумма (не меньше требуемой), актив и получатель. Подпись и сеть —
+    на транспорте: протокол не диктует, какой сети доверять.
+    """
+    if raw is None or raw == "":
+        return False, "квитанция об оплате не предъявлена"
+    receipt = raw if isinstance(raw, dict) else None
+    if receipt is None:
+        try:
+            receipt = json.loads(raw)
+        except Exception:
+            return False, "квитанция не является JSON"
+    if not isinstance(receipt, dict):
+        return False, "квитанция должна быть объектом"
+    amount = receipt.get("amount")
+    if amount is None:
+        return False, "в квитанции нет суммы"
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return False, f"сумма в квитанции не число: {amount!r}"
+    if amount + 1e-9 < expected_usdc:
+        return False, f"сумма {amount} меньше требуемой {expected_usdc}"
+    if receipt.get("asset") and str(receipt["asset"]).upper() != asset.upper():
+        return False, f"актив {receipt['asset']} не {asset}"
+    if payee and receipt.get("payee") and receipt["payee"] != payee:
+        return False, f"получатель {receipt['payee']} не {payee}"
+    return True, "квитанция принята"
+
+
 def x402_header_ok(headers: dict[str, str], expected_usdc: float) -> tuple[bool, str]:
     """Проверить заголовок оплаты x402-совместимого вида.
 

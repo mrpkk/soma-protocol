@@ -24,6 +24,7 @@ transport, money and history are carriers.
 | `cold_refs[]` | string[] | no | `sha256:` references to cold artifacts (hashes, not bodies) |
 | `mandate` | object | no | what the sender permits — checked before acting |
 | `price_usdc` | number | no | maximum the sender will pay for this message |
+| `cost_usdc` | number | no | what the work costs; a receipt for this amount is required to claim it |
 | `status` | string | no | `queued` / `claimed` / `done` / `expired` / `declined` |
 | `signature` | object | no | signature over the canonical envelope |
 | `routing` | object | no | who was chosen and why |
@@ -156,12 +157,40 @@ An adapter exposes the same operations as MCP tools (`send`, `inbox`, `claim`, `
 An A2A task is an envelope with `to` and `task`; the Agent Card format (`agents.json`) is used
 for discovery. A2A is the transport; the mandate and the signature are ours.
 
-### 3.4 x402
+### 3.4 x402 and payment
 
-The payment contract: a message may carry `price_usdc`. The carrier presents a payment receipt
-in the `X-PAYMENT` header; the receiver settles it through its own wallet. The receipt must be
-JSON and carry an `amount` not below the requested one — a receipt without an amount, or below
-the amount, is refused. Signature and chain settlement are the transport's job.
+Two numbers, two directions:
+
+- `price_usdc` — the **ceiling** the sender is willing to pay;
+- `cost_usdc` — the **price of the work**, set by the receiver.
+
+If `cost_usdc` is set, the envelope may only be claimed with a payment receipt. The receipt
+travels in the `X-PAYMENT` header (or in the `payment` field of the claim request):
+
+```json
+{"amount": 0.005, "asset": "USDC", "payee": "0x…", "network": "eip155:8453",
+ "signature": "…"}
+```
+
+The protocol checks that the amount covers `cost_usdc`, that the asset is USDC, and that the
+payee matches when it is given. Without a receipt the claim is refused with
+`{"code": "payment_required", "amount_usdc": 0.005}` — and the envelope stays in the queue, so
+it can be claimed after payment. Signature verification and chain settlement belong to the
+transport: the protocol fixes the contract, not the network.
+
+### 3.5 A2A
+
+A2A is a carrier, not a second protocol. The mapping is explicit:
+
+| Envelope | A2A task |
+|---|---|
+| `id` | `taskId`, `contextId` |
+| `goal` + `task` | the first history message (text part) |
+| budget, mandate, signature | `metadata.soma` (the whole envelope) |
+| result | a completed task with an artifact, or an agent message |
+
+`soma.a2a` does the translation in both directions, and `task_to_envelope` refuses a task
+without `metadata.soma` — a foreign task is not silently treated as ours.
 **The protocol fixes the contract, not the chain.** Settlement is a transport concern; a
 deployment chooses Base, Solana or another rail.
 
@@ -193,6 +222,7 @@ IPFS, a notary) for that. Until then the chain proves ordering and continuity, n
 | cannot sign | `{"ok": false, "error": "cannot_sign", "details": ["нечем подписать: ..."]}` |
 | duplicate id | `{"ok": false, "error": "duplicate_id", "details": [...]}` |
 | bad body | `{"error": "bad_request", "details": [...]}` (400) |
+| payment required | `{"ok": false, "code": "payment_required", "amount_usdc": 0.005}` |
 | no executor | `{"agent": null, "reason": "...", "rejected": [...]}` |
 | mandate violated | `{"ok": false, "reason": "<rule>: <why>"}` |
 | already claimed | `{"ok": false, "reason": "конверт недоступен (status=claimed)"}` |
@@ -214,7 +244,8 @@ An implementation conforms when it passes `tests/test_conformance.py`:
 - C9 completion closes the envelope;
 - C10 budget and mandate travel with the envelope;
 - C11 a mandate refusal names a rule;
-- C12 a repeated envelope id does not overwrite the original.
+- C12 a repeated envelope id does not overwrite the original;
+- C13 work with a price is not delivered without a payment receipt.
 
 Routing never touches a signed field: the chosen executor is stored separately
 (`assigned_to`), so the signature stays valid after `route`.

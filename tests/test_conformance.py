@@ -29,7 +29,8 @@ class Harness(Protocol):
 
     def send(self, **kwargs: Any) -> dict[str, Any]: ...
     def inbox(self, agent: str) -> list[dict[str, Any]]: ...
-    def claim(self, env_id: str, agent: str) -> dict[str, Any]: ...
+    def claim(self, env_id: str, agent: str,
+              payment: str | dict | None = None) -> dict[str, Any]: ...
     def complete(self, env_id: str, result: dict[str, Any], agent: str | None = None) -> dict[str, Any]: ...
     def route(self, env_id: str) -> dict[str, Any]: ...
     def verify(self, envelope: dict[str, Any]) -> tuple[bool, str]: ...
@@ -60,8 +61,9 @@ class MitraHarness:
     def inbox(self, agent: str) -> list[dict[str, Any]]:
         return self.hub.inbox(agent)
 
-    def claim(self, env_id: str, agent: str) -> dict[str, Any]:
-        return self.hub.claim(env_id, agent)
+    def claim(self, env_id: str, agent: str,
+              payment: str | dict | None = None) -> dict[str, Any]:
+        return self.hub.claim(env_id, agent, payment)
 
     def complete(self, env_id: str, result: dict[str, Any], agent: str | None = None) -> dict[str, Any]:
         return self.hub.complete(env_id, result, agent)
@@ -177,6 +179,15 @@ def test_c11_mandate_refusal_names_a_rule(impl):
     from soma.envelope import Mandate, check_mandate
     ok, why = check_mandate({"amount": 999999}, Mandate(max_cost_usd=1.0))
     assert not ok and ":" in why, why
+
+
+def test_c13_paid_work_requires_a_receipt(impl):
+    """Работа с назначенной ценой не выдаётся без квитанции об оплате."""
+    res = impl.send(goal="g", task="t", to="research", cost_usdc=0.005)
+    refused = impl.claim(res["id"], "research")
+    assert refused.get("ok") is not True, "работа с ценой выдана без оплаты"
+    paid = impl.claim(res["id"], "research", {"amount": 0.005, "asset": "USDC"})
+    assert paid.get("ok") is True, paid
 
 
 def test_c12_duplicate_envelope_id_is_not_overwritten(impl):

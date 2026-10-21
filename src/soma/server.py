@@ -88,7 +88,8 @@ class Hub:
                         "context": self.memory.pack(env)})
         return out
 
-    def claim(self, env_id: str, agent: str) -> dict[str, Any]:
+    def claim(self, env_id: str, agent: str,
+              payment: str | dict | None = None) -> dict[str, Any]:
         """Забрать конверт.
 
         Проверки идут ДО захвата: отказ не должен сжигать конверт —
@@ -104,6 +105,14 @@ class Hub:
         ok, sig_why = self.verify(env)
         if not ok:
             return {"ok": False, "reason": f"подпись не прошла: {sig_why}"}
+        # Оплата: если работа что-то стоит — нужна квитанция, иначе отказ.
+        cost = env.get("cost_usdc")
+        if cost:
+            from .payments import check_receipt
+            paid, pay_why = check_receipt(payment, float(cost))
+            if not paid:
+                return {"ok": False, "reason": f"требуется оплата {cost} USDC: {pay_why}",
+                        "code": "payment_required", "amount_usdc": float(cost)}
         # Оценщик зовётся ВСЕГДА, даже если в конверте нет мандата:
         # движок с собственными правилами (Mitra Core) обязан уметь отказать
         # и без явного мандата. Эталон без мандата просто пропускает.
@@ -188,7 +197,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        if u.path == "/healthz":
+        if u.path in ("/.well-known/agent-card.json", "/.well-known/agent.json", "/agents.json"):
+            from .a2a import agent_card
+            self._send(200, agent_card(
+                name=os.environ.get("SOMA_AGENT_NAME", "soma"),
+                url=os.environ.get("SOMA_AGENT_URL", f"http://{self.headers.get('Host', '127.0.0.1')}/mcp"),
+                description=os.environ.get("SOMA_AGENT_DESCRIPTION",
+                                           "Soma — протокол коммуникации агентов: конверт, бюджет, мандат, подпись."),
+                skills=["send", "claim", "complete", "route", "verify"]))
+        elif u.path == "/healthz":
             self._send(200, {"ok": True, "protocol": "soma/1", "time": time.time(),
                              "components": self.hub.components.describe(),
                              "stats": self.hub.memory.stats()})
@@ -227,7 +244,8 @@ class Handler(BaseHTTPRequestHandler):
             client_sig = body.get("signature") if isinstance(body.get("signature"), dict) else None
             self._send(200, self.hub.send(env, sign_it=True, client_signature=client_sig))
         elif u.path == "/v1/claim":
-            self._send(200, self.hub.claim(body.get("id", ""), body.get("agent", "")))
+            payment = body.get("payment") or self.headers.get("x-payment")
+            self._send(200, self.hub.claim(body.get("id", ""), body.get("agent", ""), payment))
         elif u.path == "/v1/complete":
             self._send(200, self.hub.complete(body.get("id", ""), body.get("result") or {},
                                                body.get("agent")))

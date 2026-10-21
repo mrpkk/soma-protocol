@@ -63,7 +63,8 @@ class Envelope:
     context_query: str = ""
     cold_refs: list[str] = field(default_factory=list)   # sha256-ссылки, не тела
     mandate: Mandate | None = None
-    price_usdc: float | None = None      # максимум, что готов заплатить
+    price_usdc: float | None = None      # максимум, что готов заплатить отправитель
+    cost_usdc: float | None = None       # сколько стоит выполнение (запрос получателя)
     ttl_s: float = 3600.0
     id: str = ""
     created_at: float = 0.0
@@ -419,6 +420,7 @@ _ENVELOPE_SCHEMA: dict[str, Any] = {
             },
         },
         "price_usdc": {"type": "number", "minimum": 0},
+        "cost_usdc": {"type": "number", "minimum": 0},
         "status": {"type": "string",
                    "enum": ["queued", "claimed", "done", "expired", "declined"]},
         "signature": {"type": "object"},

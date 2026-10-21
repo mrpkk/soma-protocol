@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS envelopes (
     id TEXT PRIMARY KEY, created_at REAL NOT NULL, ttl_s REAL NOT NULL,
     sender TEXT, recipient TEXT, goal TEXT, task TEXT, capability TEXT,
     token_budget INTEGER, context_query TEXT, cold_refs TEXT,
-    mandate TEXT, price_usdc REAL, status TEXT, claimed_by TEXT,
+    mandate TEXT, price_usdc REAL, cost_usdc REAL, status TEXT, claimed_by TEXT,
     claimed_at REAL, result TEXT, signature TEXT, routing TEXT,
     assigned_to TEXT DEFAULT '');
 CREATE INDEX IF NOT EXISTS ix_env ON envelopes(status, created_at);
@@ -89,7 +89,8 @@ class Memory:
     def _migrate(self) -> None:
         """Мягкая миграция: добавить недостающие колонки, не теряя данные."""
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(envelopes)").fetchall()}
-        for name, ddl in (("assigned_to", "assigned_to TEXT DEFAULT ''"),):
+        for name, ddl in (("assigned_to", "assigned_to TEXT DEFAULT ''"),
+                          ("cost_usdc", "cost_usdc REAL")):
             if name not in cols:
                 try:
                     self.conn.execute(f"ALTER TABLE envelopes ADD COLUMN {ddl}")
@@ -109,12 +110,13 @@ class Memory:
             self.conn.execute(
                 "INSERT INTO envelopes(id, created_at, ttl_s, sender, recipient,"
             " goal, task, capability, token_budget, context_query, cold_refs, mandate,"
-            " price_usdc, status, claimed_by, claimed_at, result, signature, routing)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " price_usdc, cost_usdc, status, claimed_by, claimed_at, result, signature, routing)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (d["id"], d["created_at"], d["ttl_s"], d["sender"], d.get("to", "*"), d["goal"],
              d["task"], json.dumps(d.get("capability", [])), d.get("token_budget", 2000),
              d.get("context_query", ""), json.dumps(d.get("cold_refs", [])),
-             json.dumps(d.get("mandate") or {}), d.get("price_usdc"), d.get("status", "queued"),
+             json.dumps(d.get("mandate") or {}), d.get("price_usdc"), d.get("cost_usdc"),
+             d.get("status", "queued"),
              None, None, json.dumps(d.get("result")) if d.get("result") else None,
                  json.dumps(d.get("signature", {})), json.dumps(d.get("routing", {}))))
         except sqlite3.IntegrityError:
@@ -222,7 +224,8 @@ class Memory:
             "token_budget": row["token_budget"], "context_query": row["context_query"] or "",
             "cold_refs": json.loads(row["cold_refs"] or "[]"),
             "mandate": json.loads(row["mandate"] or "{}") or None,
-            "price_usdc": row["price_usdc"], "status": row["status"],
+            "price_usdc": row["price_usdc"], "cost_usdc": row["cost_usdc"],
+            "status": row["status"],
             "claimed_by": row["claimed_by"], "claimed_at": row["claimed_at"],
             "result": json.loads(row["result"]) if row["result"] else None,
             "signature": json.loads(row["signature"] or "{}"),
