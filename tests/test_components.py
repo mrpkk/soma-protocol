@@ -131,3 +131,30 @@ def test_protocol_does_not_depend_on_our_engines():
     # с полем — по правилам
     ok, why = comps.mandate.check({"payee": "alice", "amount": 0.5}, Mandate(max_cost_usd=1.0))
     assert ok, why
+
+
+def test_entry_point_object_is_called(monkeypatch):
+    """Точка входа отдаёт ОБЪЕКТ (часто функцию) — загрузчик обязан его вызвать.
+
+    Регрессия: `ep.load()` — связанный метод, его вызов возвращает функцию,
+    а не словарь компонентов. Плагин молча не подключался.
+    """
+    import soma.components as components_mod
+
+    class FakeEP:
+        name = "fake-ep"
+        value = "pkg:factory"
+
+        def load(self):
+            return lambda: {"mandate": "from-entry-point"}
+
+    monkeypatch.setattr(components_mod, "entry_points", lambda group=None: [FakeEP()]) \
+        if hasattr(components_mod, "entry_points") else None
+
+    # подменяем источник точек входа целиком
+    import importlib.metadata as md
+    monkeypatch.setattr(md, "entry_points", lambda group=None: [FakeEP()])
+    found = components_mod.discover_plugins()
+    assert found, "точка входа не найдена"
+    provided = found[0][1]()
+    assert provided == {"mandate": "from-entry-point"}, provided

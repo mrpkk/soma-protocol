@@ -101,23 +101,56 @@ async def soma_stats() -> str:
     return json.dumps(hub().memory.stats(), ensure_ascii=False, indent=2)
 
 
-async def _main() -> None:
+def _build_app(http_path: str):
+    """ASGI-приложение MCP: transport-security и управляемый профиль."""
+    import hmac
+    from mcp.server.transport_security import TransportSecuritySettings
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+
+    app = mcp.streamable_http_app(
+        streamable_http_path=http_path,
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*",
+                           "rta.lat", "*.rta.lat"]))
+
+    # Управляемый профиль: обязательный bearer-токен.
+    # Токен не настроен — значит вход закрыт (ошибка конфигурации не открывает дверь).
+    token = os.environ.get("SOMA_TOKEN", "")
+    if os.environ.get("SOMA_MANAGED") == "1":
+        class BearerAuth(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                got = request.headers.get("authorization") or ""
+                if not token or not hmac.compare_digest(got.strip(), f"Bearer {token}"):
+                    return JSONResponse({"error": "unauthorized"}, status_code=401)
+                return await call_next(request)
+
+        app.add_middleware(BearerAuth)
+    return app
+
+
+def _run_http(args) -> None:
+    import uvicorn
+    uvicorn.run(_build_app(args.http_path), host=args.host, port=args.http, log_level="warning")
+
+
+def _run_stdio() -> None:
+    asyncio.run(mcp.run_stdio_async())
+
+
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--http", type=int, default=0, help="порт streamable-http (0 = stdio)")
     ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
-    ap.add_argument("--http-path", default="/mcp")
+    ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8193") or 8193))
+    ap.add_argument("--http-path", default="/hub/mcp",
+                    help="путь MCP под префиксом туннеля (путь не срезается)")
     args = ap.parse_args()
     if args.http:
-        import uvicorn
-        from mcp.server.transport_security import TransportSecuritySettings
-        app = mcp.streamable_http_app(
-            streamable_http_path=args.http_path,
-            transport_security=TransportSecuritySettings(
-                allowed_hosts=["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*"]))
-        uvicorn.run(app, host=args.host, port=args.http, log_level="warning")
+        _run_http(args)
     else:
-        await mcp.run_stdio_async()
+        _run_stdio()
 
 
 if __name__ == "__main__":
-    asyncio.run(_main())
+    main()

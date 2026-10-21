@@ -80,7 +80,12 @@ def discover_plugins() -> list[tuple[str, Callable[[], dict[str, Any]]]]:
         from importlib.metadata import entry_points
         for ep in entry_points(group=ENTRY_POINT_GROUP):
             try:
-                found.append((f"{ep.name} ({ep.value})", ep.load))
+                # ep.load() возвращает ОБЪЕКТ (часто — функцию-фабрику),
+                # а не словарь компонентов. Приводим к единому виду «вызвать → dict».
+                def _make(ep=ep):
+                    obj = ep.load()
+                    return obj() if callable(obj) else obj
+                found.append((f"{ep.name} ({ep.value})", _make))
             except Exception:
                 continue
     except Exception:
