@@ -111,3 +111,32 @@ class _Request:
     def client(self):
         host, port = (self.scope.get("client") or (None, None))
         return type("C", (), {"host": host, "port": port})()
+
+
+class PathAlias:
+    """Второй публичный путь к тому же MCP-эндпоинту.
+
+    Менять путь у живого эндпоинта нельзя (его уже знают клиенты и каталоги),
+    а объявить его в реестре нужно: каталог получает адрес из реестра и не
+    спрашивает нас. Поэтому алиас переписывает путь до обработчика.
+    """
+
+    def __init__(self, target: str, aliases: str = ""):
+        self.target = target
+        self.aliases = {a.strip() for a in (aliases or "").split(",") if a.strip()}
+
+    def as_middleware(self):
+        alias = self
+
+        class Receive:
+            def __init__(self, app):
+                self.app = app
+
+            async def __call__(self, scope, receive, send):
+                if scope["type"] == "http" and scope.get("path") in alias.aliases:
+                    scope = dict(scope)
+                    scope["path"] = alias.target
+                    scope["raw_path"] = alias.target.encode()
+                await self.app(scope, receive, send)
+
+        return Receive

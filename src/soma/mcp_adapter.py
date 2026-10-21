@@ -124,7 +124,7 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
 
-    from .limits import IpRateLimit
+    from .limits import IpRateLimit, PathAlias
 
     app = mcp.streamable_http_app(
         streamable_http_path=http_path,
@@ -168,6 +168,10 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
 
         app.add_middleware(BearerAuth)
 
+    aliases = os.environ.get("SOMA_PATH_ALIASES", "")
+    if aliases:
+        # Путь публикуется в реестре, а живой эндпоинт остаётся прежним.
+        app.add_middleware(PathAlias(http_path, aliases).as_middleware())
     if rate_limit > 0:
         app.add_middleware(IpRateLimit(rate_limit).as_middleware())
     if force_visibility:

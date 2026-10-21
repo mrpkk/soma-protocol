@@ -137,3 +137,20 @@ def test_public_node_refuses_after_the_quota(public_node):
         code, _ = _rpc(url, "tools/list", {}, 10 + i, session)
         codes.append(code)
     assert 429 in codes, f"квота не сработала: {codes}"
+
+
+def test_path_alias_serves_the_same_endpoint():
+    """Второй публичный путь переписывается на канонический — без второго процесса."""
+    import asyncio
+    from soma.limits import PathAlias
+
+    seen = {}
+
+    async def app(scope, receive, send):
+        seen["path"] = scope["path"]
+
+    mw = PathAlias("/soma/mcp", "/soma-protocol/mcp").as_middleware()(app)
+    asyncio.run(mw({"type": "http", "path": "/soma-protocol/mcp", "headers": []}, None, None))
+    assert seen["path"] == "/soma/mcp"
+    asyncio.run(mw({"type": "http", "path": "/soma/mcp", "headers": []}, None, None))
+    assert seen["path"] == "/soma/mcp"

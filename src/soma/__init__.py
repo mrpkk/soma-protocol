@@ -11,5 +11,5 @@ from .memory import Memory  # noqa: F401
 from .registry import Registry  # noqa: F401
 from .server import Hub, serve  # noqa: F401
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 PROTOCOL = "soma/1"
