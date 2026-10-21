@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.mrpkk/soma-protocol",
-  "description": "Soma — протокол коммуникации агентов: сообщение между агентами это конверт (цель, задача, бюджет токенов, мандат, цена, подпись). Память в три яруса с жёстким бюджетом и объявленной деградацией; роутер по capability, мандату и цене; отказ всегда с причиной; подписанные квитанции и репутация по фактам; перевозчики MCP, A2A и x402; федерация узлов с переносимой историей. Набор тестов соответствия: любая реализация может доказать совместимость.",
+  "description": "Agent protocol: an envelope with budget, mandate and signature; memory, reputation and federation.",
   "status": "active",
   "version": "1.2.0",
   "repository": {
