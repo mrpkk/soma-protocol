@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 try:
     from mcp.server.mcpserver import MCPServer
@@ -134,6 +135,22 @@ async def soma_recall(query: str, k: int = 10) -> str:
                       ensure_ascii=False, default=str)
 
 
+@mcp.tool(name="soma_export",
+          description="Выгрузить все факты и конверты узла одним JSON — право выхода без замка и без удаления за вами.")
+async def soma_export(limit: int = 5000) -> str:
+    h = hub()
+    with h.memory.lock:
+        facts = [dict(r) for r in h.memory.conn.execute(
+            "SELECT id,text,tags,importance,kind,source,session,created_at,updated_at,status"
+            " FROM facts ORDER BY id LIMIT ?", (limit,)).fetchall()]
+        envs = [dict(r) for r in h.memory.conn.execute(
+            "SELECT * FROM envelopes ORDER BY created_at LIMIT ?", (limit,)).fetchall()]
+    return json.dumps({"exported_at": time.time(),
+                       "counts": {"facts": len(facts), "envelopes": len(envs)},
+                       "facts": facts, "envelopes": envs},
+                      ensure_ascii=False, default=str)
+
+
 @mcp.tool(name="soma_cold_put",
           description="Положить большой артефакт в холодный ярус. Возвращает ссылку sha256 — тело не жжёт контекст.")
 async def soma_cold_put(text: str) -> str:
@@ -166,6 +183,7 @@ _TOOLS = [
     ("soma_cold_put", "Put a large artifact in the cold tier; get a sha256 reference instead of a body."),
     ("soma_cold_get", "Fetch a cold artifact by sha256; content is checked against the hash."),
     ("soma_stats", "Node state: envelopes by status, facts, edges, cold artifacts, database size."),
+    ("soma_export", "Export every fact and envelope as one JSON — the right to leave, with no lock-in."),
 ]
 
 _CSS = """
@@ -328,6 +346,20 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
         app.router.routes.insert(0, Route(_p, _landing_route))
     for _p in ("/hub/status", "/status"):
         app.router.routes.insert(0, Route(_p, _status_route))
+
+    async def _export_route(request):
+        h = hub()
+        with h.memory.lock:
+            facts = [dict(r) for r in h.memory.conn.execute(
+                "SELECT id,text,tags,importance,kind,source,session,created_at,updated_at,status"
+                " FROM facts ORDER BY id").fetchall()]
+            envs = [dict(r) for r in h.memory.conn.execute(
+                "SELECT * FROM envelopes ORDER BY created_at").fetchall()]
+        return JSONResponse({"exported_at": time.time(),
+                             "counts": {"facts": len(facts), "envelopes": len(envs)},
+                             "facts": facts, "envelopes": envs})
+
+    app.router.routes.insert(0, Route("/hub/export", _export_route))
 
     for _p in ("/health", prefix + "/health"):
         app.router.routes.insert(0, Route(_p, _health))
