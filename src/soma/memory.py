@@ -23,7 +23,22 @@ import time
 from pathlib import Path
 from typing import Any
 
-CHARS_PER_TOKEN = 220.0  # домашняя конвенция: ~220 символов на условный токен
+CHARS_PER_TOKEN = 3.6  # совместимость: среднее между латиницей (~4) и кириллицей (~2.2)
+
+
+def estimate_tokens(text: str) -> float:
+    """Оценка токенов без токенизатора, но с честной шкалой.
+
+    Прежняя домашняя конвенция «220 символов на токен» занижала расход в 50–100 раз:
+    русский текст — примерно 2.2 символа на токен, английский — около 4.
+    Занижение опасно: бюджет выглядел соблюдённым, а контекст уже не влезал.
+    """
+    if not text:
+        return 0.0
+    cyr = sum(1 for ch in text if "\u0400" <= ch <= "\u04ff")
+    lat = sum(1 for ch in text if ch.isascii() and ch.isalpha())
+    other = max(0, len(text) - cyr - lat)
+    return max(1.0, cyr / 2.2 + lat / 4.0 + other / 3.0)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS envelopes (
@@ -342,7 +357,7 @@ class Memory:
         # Горячий ярус (цель и задача) входит всегда: без него агент не знает,
         # что делать. Это единственное осознанное превышение бюджета.
         hot = f"ЦЕЛЬ: {env.get('goal','')}\nЗАДАЧА: {env.get('task','')}"
-        cost = len(hot) / CHARS_PER_TOKEN
+        cost = estimate_tokens(hot)
         parts.append(hot)
         used += cost
         sources.append("hot")
@@ -356,7 +371,7 @@ class Memory:
                 dropped.append("warm: по запросу не найдено")
             else:
                 for row in rows:
-                    c = len(row["text"]) / CHARS_PER_TOKEN + 1
+                    c = estimate_tokens(row["text"])
                     if used + c > approx:
                         dropped.append(f"warm: факт {row['id']} не влез в бюджет")
                         continue
@@ -369,7 +384,7 @@ class Memory:
             if text is None:
                 dropped.append(f"cold:{ref}: артефакт не найден")
                 continue
-            c = len(text) / CHARS_PER_TOKEN + 1
+            c = estimate_tokens(text)
             if used + c > approx:
                 dropped.append(f"cold:{ref}: не влез в бюджет")
                 continue
