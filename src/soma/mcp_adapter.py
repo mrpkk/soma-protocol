@@ -216,10 +216,41 @@ td{padding:7px 10px;border-top:1px solid var(--line);vertical-align:top}
 td:first-child{white-space:nowrap;color:var(--acc);font-family:ui-monospace,monospace;font-size:13px}
 td:last-child{color:var(--dim)}
 a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+.ask{display:flex;gap:8px;margin:0 0 10px}
+.ask input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:9px;
+           padding:11px 14px;color:var(--fg);font-size:15px;outline:none}
+.ask input:focus{border-color:var(--acc)}
+.ask button{background:var(--acc);color:#131313;border:0;border-radius:9px;padding:11px 18px;
+            font-size:15px;font-weight:600;cursor:pointer}
+.ask button:hover{filter:brightness(1.07)}
 footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:14px}
 .pill{color:var(--ok)}
 """
 
+
+#: Скрипт демо вынесен из f-строки: фигурные скобки JS в шаблоне — синтаксическая ошибка.
+_DEMO_JS = """
+function ask(){
+  var q=(document.getElementById('q').value||'').trim();
+  var out=document.getElementById('out');
+  if(q.length<2){out.textContent='Type at least two characters.';return;}
+  out.textContent='searching\u2026';
+  fetch('/hub/demo/recall?q='+encodeURIComponent(q))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.error){out.textContent=d.error;return;}
+      if(!d.count){
+        out.textContent='Nothing found for "'+q+'". The node has '+out.dataset.facts+' facts.';
+        return;
+      }
+      out.textContent=d.facts.map(function(f){
+        return '\u2022 '+f.text+(f.tags?'  ['+f.tags+']':'');
+      }).join('\n');
+    })
+    .catch(function(){out.textContent='Request failed. Try again in a moment.';});
+}
+document.getElementById('q').addEventListener('keydown',function(e){if(e.key==='Enter')ask();});
+"""
 
 def _landing(stats: dict[str, object]) -> str:
     """Публичная страница узла: что это, зачем и как подключиться за минуту.
@@ -272,6 +303,14 @@ def _landing(stats: dict[str, object]) -> str:
 <p style="color:var(--dim);font-size:14px">Read-only demo, no token:
 <code>GET /hub/status</code> · install notes:
 <code>GET /hub/llms-install.md</code> · privacy: <code>GET /hub/privacy</code></p>
+
+<h2>Try memory — no token</h2>
+<form class=ask onsubmit="return false">
+  <input id=q placeholder="how much does soma cost" autocomplete=off>
+  <button type=button onclick=ask()>Ask</button>
+</form>
+<pre id=out data-facts="{stats.get('facts',0)}">Type a question. The node searches its own memory and shows what it finds.</pre>
+<script>{_DEMO_JS}</script>
 
 <h2>Tools</h2>
 <table>{rows}</table>
@@ -361,6 +400,39 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
 
     app.router.routes.insert(0, Route("/hub/export", _export_route))
 
+    # ── демо памяти: попробовать до всякой регистрации ──────────────────────
+    # Чтение только по фактам узла. Записи нет: демо не должно быть способом
+    # залить чужую базу. Лимит в памяти процесса — 10 запросов в минуту на IP.
+    import threading
+    _demo_hits: dict[str, list[float]] = {}
+    _demo_lock = threading.Lock()
+
+    def _demo_allow(ip: str, per_min: int = 10) -> bool:
+        now = time.time()
+        with _demo_lock:
+            hits = [t for t in _demo_hits.get(ip, []) if now - t < 60]
+            if len(hits) >= per_min:
+                _demo_hits[ip] = hits
+                return False
+            hits.append(now)
+            _demo_hits[ip] = hits
+            return True
+
+    async def _demo_recall(request):
+        ip = request.client.host if request.client else "?"
+        if not _demo_allow(ip):
+            return JSONResponse({"error": "rate limit: 10 requests per minute per address"},
+                                status_code=429)
+        q = (request.query_params.get("q") or "").strip()
+        if len(q) < 2:
+            return JSONResponse({"error": "q must be at least 2 characters"}, status_code=400)
+        rows = hub().memory.recall(q, k=5)
+        facts = [{"text": r.get("text", ""), "tags": r.get("tags", ""),
+                  "importance": r.get("importance", 3)} for r in rows]
+        return JSONResponse({"query": q, "count": len(facts), "facts": facts})
+
+    app.router.routes.insert(0, Route("/hub/demo/recall", _demo_recall))
+
     for _p in ("/health", prefix + "/health"):
         app.router.routes.insert(0, Route(_p, _health))
     for _p in ("/privacy", prefix + "/privacy"):
@@ -377,6 +449,7 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
         public_paths = {
             "/hub", "/hub/status", "/status", "/health", "/hub/health",
             "/privacy", "/hub/privacy", "/llms-install.md", "/hub/llms-install.md",
+            "/hub/demo/recall",
         }
 
         class BearerAuth(BaseHTTPMiddleware):

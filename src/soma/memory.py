@@ -289,7 +289,8 @@ class Memory:
             rows = self.conn.execute(
                 "SELECT f.* FROM facts_fts JOIN facts f ON f.id = facts_fts.rowid"
                 " WHERE facts_fts MATCH ? AND f.status='active'"
-                " ORDER BY f.importance DESC, f.updated_at DESC LIMIT ?", (match, k)).fetchall()
+                # bm25 — релевантность запросу; важность и свежесть решают при равенстве.
+                " ORDER BY bm25(facts_fts), f.importance DESC, f.updated_at DESC LIMIT ?", (match, k)).fetchall()
             if rows:
                 return [dict(r) for r in rows]
         except sqlite3.Error:
