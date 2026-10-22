@@ -338,3 +338,38 @@ def test_chain_breaks_when_a_link_is_tampered(tmp_path):
                           encoding="utf-8")
     ok, why = chain.verify_chain()
     assert not ok and "разрыв" in why, why
+
+
+def test_public_landing_and_status_open_panel(tmp_path, monkeypatch):
+    """Публичный вход: лендинг и статус без токена, MCP — закрыт.
+
+    23.10.2026: 401 на главной отталкивал и людей, и каталоги MCP —
+    первый экран должен объяснять продукт, а не требовать ключ.
+    """
+    monkeypatch.setenv("SOMA_DB", str(tmp_path / "soma.db"))
+    monkeypatch.setenv("SOMA_COLD", str(tmp_path / "cold"))
+    monkeypatch.setenv("SOMA_HISTORY", str(tmp_path / "history.jsonl"))
+    monkeypatch.setenv("SOMA_MANAGED", "1")
+    monkeypatch.setenv("SOMA_TOKEN", "test-token")
+
+    import soma.mcp_adapter as adapter
+    from starlette.testclient import TestClient
+
+    adapter._HUB = None
+    try:
+        client = TestClient(adapter._build_app("/hub/mcp"))
+        landing = client.get("/hub")
+        assert landing.status_code == 200
+        assert "Soma" in landing.text and "soma_remember" in landing.text
+
+        status = client.get("/hub/status")
+        assert status.status_code == 200
+        body = status.json()
+        assert body["service"] == "soma"
+        assert "soma_remember" in body["tools"]
+
+        assert client.get("/health").status_code == 200
+        # Вход в MCP остаётся закрытым: публична витрина, не данные.
+        assert client.post("/hub/mcp", json={}).status_code == 401
+    finally:
+        adapter._HUB = None
