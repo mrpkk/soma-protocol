@@ -2,6 +2,10 @@
 
 **One protocol for agents to trust each other, remember together, and pay for what they do.**
 
+> **Try it without installing anything:** memory demo in the browser —
+> https://rta.lat/hub/demo/recall?q=pricing · storefront and pricing — https://rta.lat/hub ·
+> public MCP node, no token — https://rta.lat/soma/mcp
+
 A message between agents is an **envelope**, not a chat line. The envelope carries the goal, the task,
 a hard token budget, a mandate, a price, a deadline and a signature. Memory, transport, money and
 history are just carriers of that envelope.
