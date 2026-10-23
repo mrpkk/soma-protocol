@@ -151,6 +151,41 @@ async def soma_export(limit: int = 5000) -> str:
                       ensure_ascii=False, default=str)
 
 
+@mcp.tool(name="soma_nonce",
+          description="Одноразовый нонс для регистрации внешнего агента: доказательство владения ключом.")
+async def soma_nonce(agent: str) -> str:
+    return json.dumps({"agent": agent, "nonce": hub().registry.issue_nonce(agent)},
+                      ensure_ascii=False)
+
+
+@mcp.tool(name="soma_register",
+          description="Зарегистрировать внешнего агента: имя, публичный ключ Ed25519, подпись нонса, способности и цена за вызов.")
+async def soma_register(agent: str, public_key: str, proof: str,
+                        capabilities: list[str] | None = None,
+                        cost_per_call: float = 0.0) -> str:
+    ok, why = hub().registry.register(agent, public_key, capabilities=capabilities or [],
+                                      cost_per_call=cost_per_call, proof=proof)
+    return json.dumps({"ok": ok, "reason": why, "agent": agent}, ensure_ascii=False)
+
+
+@mcp.tool(name="soma_agents",
+          description="Реестр агентов: кто зарегистрирован, что умеет, сколько стоит. Публичная витрина доверия.")
+async def soma_agents() -> str:
+    reg = hub().registry.agents or {}
+    rows = [{"agent": k, "capabilities": v.get("capabilities", []),
+             "cost_per_call": v.get("cost_per_call", 0),
+             "external": bool(v.get("external")), "registered_at": v.get("registered_at")}
+            for k, v in reg.items()]
+    return json.dumps({"count": len(rows), "agents": rows}, ensure_ascii=False, default=str)
+
+
+@mcp.tool(name="soma_reputation",
+          description="Репутация агента по фактам: подписанные квитанции, нарушения и итоговый счёт.")
+async def soma_reputation(agent: str) -> str:
+    return json.dumps({"agent": agent, "score": hub().reputation.score(agent)},
+                      ensure_ascii=False, default=str)
+
+
 @mcp.tool(name="soma_reflect",
           description="Собрать наблюдение по запросу: связка фактов с источниками и рёбрами derived_from. Ответ указывает, из чего выведен.")
 async def soma_reflect(query: str, k: int = 8, save: bool = True) -> str:
@@ -384,10 +419,11 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
 
     async def _landing_route(request):
         from starlette.responses import HTMLResponse
-        return HTMLResponse(_landing(_public_state()))
+        return HTMLResponse(_landing(_public_state()),
+                            headers={"Cache-Control": "no-store, must-revalidate"})
 
     async def _status_route(request):
-        return JSONResponse(_public_state())
+        return JSONResponse(_public_state(), headers={"Cache-Control": "no-store"})
 
     for _p in ("/hub", "/hub/"):
         app.router.routes.insert(0, Route(_p, _landing_route))
@@ -441,6 +477,27 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
 
     app.router.routes.insert(0, Route("/hub/demo/recall", _demo_recall))
 
+    async def _agents_route(request):
+        reg = hub().registry.agents or {}
+        rows = [{"agent": k, "capabilities": v.get("capabilities", []),
+                 "cost_per_call": v.get("cost_per_call", 0),
+                 "external": bool(v.get("external")),
+                 "reputation": hub().reputation.score(k)} for k, v in reg.items()]
+        return JSONResponse({"count": len(rows), "agents": rows},
+                            headers={"Cache-Control": "no-store"})
+
+    async def _agent_card_route(request):
+        name = request.path_params.get("name", "")
+        reg = hub().registry.agents or {}
+        if name not in reg:
+            return JSONResponse({"error": "agent not found", "agent": name}, status_code=404)
+        card = hub().registry.agent_card(name, f"https://rta.lat/hub/agents/{name}")
+        card["reputation"] = hub().reputation.score(name)
+        return JSONResponse(card, headers={"Cache-Control": "no-store"})
+
+    app.router.routes.insert(0, Route("/hub/agents", _agents_route))
+    app.router.routes.insert(0, Route("/hub/agents/{name}", _agent_card_route))
+
     for _p in ("/health", prefix + "/health"):
         app.router.routes.insert(0, Route(_p, _health))
     for _p in ("/privacy", prefix + "/privacy"):
@@ -457,13 +514,13 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
         public_paths = {
             "/hub", "/hub/status", "/status", "/health", "/hub/health",
             "/privacy", "/hub/privacy", "/llms-install.md", "/hub/llms-install.md",
-            "/hub/demo/recall",
+            "/hub/demo/recall", "/hub/agents",
         }
 
         class BearerAuth(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):
                 path = request.url.path.rstrip("/") or "/"
-                if path in public_paths:
+                if path in public_paths or path.startswith("/hub/agents/"):
                     return await call_next(request)
                 got = request.headers.get("authorization") or ""
                 if not token or not hmac.compare_digest(got.strip(), f"Bearer {token}"):
