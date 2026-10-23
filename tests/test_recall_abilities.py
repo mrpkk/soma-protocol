@@ -90,3 +90,24 @@ def test_abstention_returns_nothing_relevant(tmp_path, q):
     hits = _top(_mem(tmp_path), q)
     joined = " ".join(hits).lower()
     assert not any(w in joined for w in ("токио", "berlin", "шахмат")), hits
+
+
+# ── 6. смысл: синоним без единого общего слова ────────────────────────
+def test_semantic_finds_synonym_without_shared_words(tmp_path, monkeypatch):
+    """«сколько стоит подписка» не имеет общих слов с «49 долларов в месяц»."""
+    pytest.importorskip("fastembed")
+    monkeypatch.setenv("SOMA_SEMANTIC", "1")
+    m = Memory(path=str(tmp_path / "m.db"))
+    m.remember("Сома: одно окружение — 49 долларов в месяц.", tags="цены")
+    hits = [r["text"] for r in m.recall("сколько стоит подписка", k=3)]
+    assert any("49" in h for h in hits), hits
+
+
+def test_semantic_threshold_keeps_abstention(tmp_path, monkeypatch):
+    """Порог обязателен: иначе «не знаю» превращается в «вот что-то похожее»."""
+    pytest.importorskip("fastembed")
+    monkeypatch.setenv("SOMA_SEMANTIC", "1")
+    m = Memory(path=str(tmp_path / "m.db"))
+    m.remember("Сома: одно окружение — 49 долларов в месяц.", tags="цены")
+    hits = [r["text"] for r in m.recall("кто выиграл чемпионат по шахматам", k=3)]
+    assert not any("49" in h for h in hits), hits

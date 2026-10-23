@@ -60,3 +60,26 @@ def test_reflect_names_its_sources(tmp_path):
     assert out["sources"] and out["observation_id"]
     edges = m.conn.execute("SELECT COUNT(*) c FROM edges WHERE relation='derived_from'").fetchone()["c"]
     assert edges == len(out["sources"])
+
+CASES_PRECISE = [
+    # Регрессия 24.10.2026: сущность с цифрой проигрывала соседней с тем же префиксом.
+    ("Проект aurora-12: порт — 8185.", "какой порт у aurora-12", "8185"),
+    ("Проект aurora-1: порт — 8000.", "какой порт у aurora-1", "8000"),
+    ("Проект delta-77: кошелёк — 0xabc123.", "какой кошелёк у delta-77", "0xabc123"),
+]
+
+
+@pytest.mark.parametrize("fact,query,expected", CASES_PRECISE)
+def test_recall_ranks_exact_entity_first(tmp_path, fact, query, expected):
+    """Точное имя сущности должно стоять первым, а не «где-то в топ-3».
+
+    Провал был не в поиске, а в ранжировании: FTS считал общим совпадением
+    префикс «aurora-1» и «aurora-12», и нужный факт уходил ниже.
+    """
+    m = Memory(str(tmp_path / "p.db"), cold_dir=str(tmp_path / "cold"))
+    m.remember(fact, tags="project", importance=3)
+    m.remember("Проект aurora-121: порт — 9999.", tags="project", importance=3)
+    m.remember("Проект aurora-13: порт — 7777.", tags="project", importance=3)
+    rows = m.recall(query, k=3)
+    assert rows, f"пустая выдача на «{query}»"
+    assert expected in rows[0]["text"], f"«{query}»: первым пришёл {rows[0]['text']!r}"

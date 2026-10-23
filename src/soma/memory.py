@@ -104,6 +104,11 @@ class Memory:
         self.conn.executescript(FTS_TRIGGERS)
         self._migrate()
         self.conn.commit()
+        # Семантический канал выключен по умолчанию: модель грузится секунды,
+        # и включать её без спроса нельзя. SOMA_SEMANTIC=1 включает.
+        from .semantic import SemanticIndex
+        self.semantic = SemanticIndex(self.conn)
+        self.semantic_on = os.getenv("SOMA_SEMANTIC", "0") == "1"
 
     def _migrate(self) -> None:
         """Мягкая миграция: добавить недостающие колонки, не теряя данные."""
@@ -276,7 +281,10 @@ class Memory:
                     " created_at, updated_at, status) VALUES(?,?,?,?,?,?,?,?,'active')",
                 (text, kind, tags.strip(), max(1, min(5, importance)), source, session, now, now))
             self.conn.commit()
-            return int(cur.lastrowid)
+            new_id = int(cur.lastrowid)
+        if getattr(self, "semantic_on", False):
+            self.semantic.index(new_id, text)
+        return new_id
 
     def supersede(self, old_id: int, new_text: str, **kw) -> int:
         new_id = self.remember(new_text, **kw)
@@ -356,6 +364,48 @@ class Memory:
                 if d["id"] not in by_id:
                     by_id[d["id"]] = d
                 ranks[d["id"]] = ranks.get(d["id"], 0) + 0.6 / (60 + rank)  # основы — вес 0.6
+        # Канал 4 — точное вхождение редкого слова. Без него «aurora-12»
+        # проигрывает «aurora-1»: FTS считает общий префикс совпадением, и
+        # нужный факт уходит из топ-1. Редким считаем слово с цифрой, дефисом
+        # или длиной от 8 символов — обычные слова и так ловит bm25.
+        # Берём слова из исходной строки, а не из terms: разбор по «\w» рвёт
+        # дефис, и «aurora-12» превращается в «aurora» + «12» — оба частых.
+        raw_words = re.findall(r"[^\s,.;:!?«»()\[\]]+", query.lower())
+        rare = [w.strip("'\"") for w in raw_words
+                if len(w) >= 8 or any(c.isdigit() for c in w) or "-" in w][:6]
+        for t_ in rare:
+            try:
+                exact = self.conn.execute(
+                    "SELECT * FROM facts WHERE status='active' AND lower(text) LIKE ?"
+                    " ORDER BY importance DESC, updated_at DESC LIMIT ?",
+                    (f"%{t_}%", k)).fetchall()
+            except sqlite3.Error:
+                exact = []
+            # Граница слова важна: «aurora-1» — префикс «aurora-12», и без
+            # проверки границы длинное имя перебивает точное.
+            bounded = re.compile(rf"(?<![\w-]){re.escape(t_)}(?![\w-])")
+            for rank, row in enumerate(exact):
+                d = dict(row)
+                if d["id"] not in by_id:
+                    by_id[d["id"]] = d
+                bonus = 2.0 if bounded.search(d["text"].lower()) else 1.0
+                ranks[d["id"]] = ranks.get(d["id"], 0) + bonus / (60 + rank)
+        # Канал 4 — смысл: эмбеддинги находят «сколько стоит подписка» по «49 долларов
+        # в месяц», где у каналов выше нет ни одного общего слова. Вес 0.8: смысл
+        # сильнее тегов, но не отменяет точное совпадение слов.
+        if getattr(self, "semantic_on", False):
+            try:
+                for rank, (fid, _score) in enumerate(self.semantic.search(query, k=k)):
+                    row = self.conn.execute(
+                        "SELECT * FROM facts WHERE id=? AND status='active'", (fid,)).fetchone()
+                    if not row:
+                        continue
+                    d = dict(row)
+                    if d["id"] not in by_id:
+                        by_id[d["id"]] = d
+                    ranks[d["id"]] = ranks.get(d["id"], 0) + 0.8 / (60 + rank)
+            except Exception:
+                pass  # семантика не должна ломать поиск
         if by_id:
             order = sorted(ranks, key=lambda i: (-ranks[i], -(by_id[i].get("importance") or 3),
                                                  -(by_id[i].get("updated_at") or 0)))
