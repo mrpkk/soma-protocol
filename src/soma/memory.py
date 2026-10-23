@@ -326,7 +326,7 @@ class Memory:
         except sqlite3.Error:
             fts = []
         for rank, row in enumerate(fts):
-            d = dict(row); by_id[d["id"]] = d; ranks[d["id"]] = ranks.get(d["id"], 0) + 1.0 / (60 + rank)
+            d = dict(row); by_id[d["id"]] = d; ranks[d["id"]] = ranks.get(d["id"], 0) + 1.0 / (60 + rank)  # смысл — вес 1.0
         if terms:
             like = " OR ".join("tags LIKE ?" for _ in terms[:6])
             tagged = self.conn.execute(
@@ -336,7 +336,7 @@ class Memory:
                 d = dict(row)
                 if d["id"] not in by_id:
                     by_id[d["id"]] = d
-                ranks[d["id"]] = ranks.get(d["id"], 0) + 1.0 / (60 + rank)
+                ranks[d["id"]] = ranks.get(d["id"], 0) + 0.5 / (60 + rank)  # теги — вес 0.5
         # Канал 3 — основы слов: в русском «подпись» и «подписан» — одно слово,
         # а FTS видит разные токены. Пять первых букв дают совпадение без стеммера.
         stems = sorted({t_[:5] for t_ in terms if len(t_) >= 5})
@@ -352,7 +352,7 @@ class Memory:
                 d = dict(row)
                 if d["id"] not in by_id:
                     by_id[d["id"]] = d
-                ranks[d["id"]] = ranks.get(d["id"], 0) + 1.0 / (60 + rank)
+                ranks[d["id"]] = ranks.get(d["id"], 0) + 0.6 / (60 + rank)  # основы — вес 0.6
         if by_id:
             order = sorted(ranks, key=lambda i: (-ranks[i], -(by_id[i].get("importance") or 3),
                                                  -(by_id[i].get("updated_at") or 0)))

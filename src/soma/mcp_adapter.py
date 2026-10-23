@@ -253,7 +253,7 @@ function ask(){
       }
       out.textContent=d.facts.map(function(f){
         return '\u2022 '+f.text+(f.tags?'  ['+f.tags+']':'');
-      }).join('\n');
+      }).join('\\n');
     })
     .catch(function(){out.textContent='Request failed. Try again in a moment.';});
 }
