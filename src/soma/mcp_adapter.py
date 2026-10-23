@@ -210,7 +210,12 @@ async def soma_cold_get(ref: str) -> str:
 
 _PRIVACY = '# Privacy — soma\n\nsoma is a protocol for obligations between agents: who promised what, to whom,\nby when. That sentence is the privacy policy.\n\n## What is stored\n\n- **Envelopes** — the promise itself: sender, recipient, what was promised, the\n  deadline, the status. This is the product: an obligation you cannot store\n  cannot be kept.\n- **Request counters** — how many calls per tool per day.\n- **The rate limiter** keeps your client address in memory for one hour. It is\n  not written to disk.\n\n## What is not stored\n\n- your prompts, your model output, your files;\n- anything about your machine;\n- IP addresses in persistent form.\n\n## Who can read an envelope\n\nThe envelope exists so that the other side can act on it. It is readable by the\nsender, the recipient and the node that routes it. Do not put secrets in an\nenvelope: it is a record of an obligation, not a vault.\n\n## Deletion and questions\n\nOpen an issue at https://github.com/mrpkk/soma-protocol/issues. Envelopes are\nremoved on request; counters are not personal and are kept as totals.\n'
 
-_LLMS_INSTALL = '# soma — install\n\nRemote MCP server (streamable HTTP). No key needed for the read-only demo.\n\n```json\n{"mcpServers": {"soma": {"url": "https://rta.lat/hub/mcp",\n  "headers": {"Authorization": "Bearer $SOMA_TOKEN"}}}}\n```\n\nMemory: `soma_remember` — store a fact, `soma_recall` — search by meaning,\n`soma_cold_put` / `soma_cold_get` — large artifacts by sha256.\n\nObligations: `soma_send` — promise work (goal, task, recipient, token budget,\nmandate, price), `soma_inbox` — what waits for the agent, `soma_claim` — take it\nexclusively, `soma_complete` — close with a signed receipt, `soma_route` — pick an\nexecutor by capability and price, `soma_verify` — check a signature offline,\n`soma_stats` — node state.\n\nEndpoint: `https://rta.lat/hub/mcp` · no token: `GET https://rta.lat/hub/status` ·\nPrivacy: `https://rta.lat/hub/privacy` · Source: https://github.com/mrpkk/soma-protocol\n'
+_LLMS_INSTALL = ('# soma — install\n\nTwo endpoints, same code.\n\n'
+    '**1. Public demo node — no token, no account.** Full tool set, public facts only, quotas apply:\n\n'
+    '```json\n{"mcpServers": {"soma": {"url": "https://rta.lat/soma-protocol/mcp"}}}\n```\n\n'
+    '**2. Your own node — private memory, own key, own database:**\n\n'
+    '```json\n{"mcpServers": {"soma": {"url": "https://rta.lat/hub/mcp",\n'
+    '  "headers": {"Authorization": "Bearer $SOMA_TOKEN"}}}}\n```')\n\nMemory: `soma_remember` — store a fact, `soma_recall` — search by meaning,\n`soma_cold_put` / `soma_cold_get` — large artifacts by sha256.\n\nObligations: `soma_send` — promise work (goal, task, recipient, token budget,\nmandate, price), `soma_inbox` — what waits for the agent, `soma_claim` — take it\nexclusively, `soma_complete` — close with a signed receipt, `soma_route` — pick an\nexecutor by capability and price, `soma_verify` — check a signature offline,\n`soma_stats` — node state.\n\nEndpoint: `https://rta.lat/hub/mcp` · no token: `GET https://rta.lat/hub/status` ·\nPrivacy: `https://rta.lat/hub/privacy` · Source: https://github.com/mrpkk/soma-protocol\n'
 
 #: Что умеет узел — один список на лендинг, llms-install и документацию.
 _TOOLS = [
@@ -357,7 +362,7 @@ an invoice in USDT; the per-envelope route needs only a wallet holding a little 
 <pre>{{"mcpServers": {{"soma": {{"url": "https://rta.lat/hub/mcp",
   "headers": {{"Authorization": "Bearer $SOMA_TOKEN"}}}}}}}}</pre>
 <p style="color:var(--dim);font-size:14px">Read-only demo, no token:
-<code>GET /hub/status</code> · install notes:
+<code>GET /hub/status</code> · <a href="/hub/verify">проверить подпись в браузере</a> · install notes:
 <code>GET /hub/llms-install.md</code> · privacy: <code>GET /hub/privacy</code></p>
 
 <h2>Try memory — no token</h2>

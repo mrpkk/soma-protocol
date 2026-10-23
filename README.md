@@ -16,6 +16,7 @@ POST /v1/messages
 - **Refusals come with a reason.** Every decline names the rule that fired.
 - **Degradation is declared.** If context did not fit, the report says what was dropped.
 - **Signatures verify offline.** Ed25519, public key included — no service, no secret.
+  Try it in the browser: https://rta.lat/hub/verify (tamper a field and watch it fail).
 - **Cost is measured, not listed.** Tokens, CPU, bytes, writes, external calls.
 
 ## 60 seconds
