@@ -340,6 +340,19 @@ def _landing(stats: dict[str, object]) -> str:
   travels with the signature, so verification works offline — no call back to us.</p></div>
 </div>
 
+<h2>Pricing</h2>
+<div class=grid>
+  <div class=card><h3>Free</h3><p><b>0</b> — 20 checks a day, the read-only demo and the
+  public status page. No account, no card.</p></div>
+  <div class=card><h3>One environment</h3><p><b>49 USD</b> per month: your own node,
+  private memory, signed receipts, envelopes bounded only by your budget.</p></div>
+  <div class=card><h3>Pay per envelope</h3><p><b>0.005 USDC</b> over x402 on Base. The node
+  fee on paid work is 1–2 % and is publicly accounted.</p></div>
+</div>
+<p style="color:var(--dim);font-size:14px">No card, no signup: write to
+<a href="mailto:maxim.pkk@gmail.com?subject=Soma%20access">maxim.pkk@gmail.com</a> and we send
+an invoice in USDT; the per-envelope route needs only a wallet holding a little USDC.</p>
+
 <h2>Connect</h2>
 <pre>{{"mcpServers": {{"soma": {{"url": "https://rta.lat/hub/mcp",
   "headers": {{"Authorization": "Bearer $SOMA_TOKEN"}}}}}}}}</pre>
