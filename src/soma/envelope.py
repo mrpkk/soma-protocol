@@ -210,7 +210,8 @@ class Ed25519Signer:
         algo = sig.get("algorithm")
         if not algo or algo == "none":
             return False, "конверт не подписан"
-        payload = canonical(envelope.payload())
+        body = envelope.payload()
+        payload = canonical(body)
         if algo == "hmac-sha256":
             secret = os.environ.get("SOMA_SECRET")
             if not secret:
@@ -226,12 +227,27 @@ class Ed25519Signer:
                 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
                     Ed25519PublicKey,
                 )
-                Ed25519PublicKey.from_public_bytes(
-                    base64.b64decode(sig["public_key"])).verify(
-                    base64.b64decode(sig["signature"]), payload)
-                return True, "ok"
+                key = Ed25519PublicKey.from_public_bytes(
+                    base64.b64decode(sig["public_key"]))
+                raw = base64.b64decode(sig["signature"])
             except Exception as exc:
                 return False, f"подпись не сошлась ({type(exc).__name__})"
+            try:
+                key.verify(raw, payload)
+                return True, "ok"
+            except Exception:
+                pass
+            # Исторический формат: ранние конверты подписывались с пустым
+            # мандатом `{}` в теле, а сейчас пустой мандат в тело не попадает.
+            # Подпись при этом честная — проверяем ровно то, что подписывали,
+            # и говорим об этом вслух, а не выдаём «не сошлась».
+            if "mandate" not in body:
+                try:
+                    key.verify(raw, canonical({**body, "mandate": {}}))
+                    return True, "ok (исторический формат: пустой мандат в теле)"
+                except Exception:
+                    pass
+            return False, "подпись не сошлась (InvalidSignature)"
         return False, f"неизвестный алгоритм: {algo}"
 
 
