@@ -109,6 +109,11 @@ class Memory:
         from .semantic import SemanticIndex
         self.semantic = SemanticIndex(self.conn)
         self.semantic_on = os.getenv("SOMA_SEMANTIC", "0") == "1"
+        if self.semantic_on:
+            # Первый поиск с моделью занимает секунды: греем в фоне, чтобы демо
+            # не выглядело зависшим. Ошибка прогрева не мешает работе.
+            import threading as _th
+            _th.Thread(target=lambda: self.semantic._ensure_model(), daemon=True).start()
 
     def _migrate(self) -> None:
         """Мягкая миграция: добавить недостающие колонки, не теряя данные."""
