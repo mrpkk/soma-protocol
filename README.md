@@ -210,6 +210,22 @@ the door. The quota is counted per sender, so one noisy agent cannot spend anoth
 - The local history chain proves ordering and continuity; the newest entry needs an external
   anchor to be final.
 
+## Measured, not claimed
+
+Memory quality is measured, not asserted. The benchmark runs offline, without an LLM:
+`bench/memory_bench.py` (numbers) and `tests/test_recall_abilities.py` (abilities).
+
+| Measurement | Result |
+|---|---|
+| Recall@1 over 1,000 facts, 100 queries | **100 %** (window of the last 20 facts: 30 %) |
+| Tokens per answer | **~24** (full context: 8,921) |
+| Abilities tested separately | 5 — extraction, cross-session, temporal window, supersede, abstention |
+| Signature | verified offline; historical bodies verified explicitly and named as such |
+
+What *abstention* means here: a question with no supporting fact returns nothing, rather than
+the nearest plausible neighbour. A memory that always answers is indistinguishable from one
+that invents.
+
 ## Status
 
 Beta. The protocol is versioned (`soma/1`); envelopes are signed, budgets are hard, refusals are

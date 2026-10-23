@@ -388,7 +388,7 @@ def _sample_envelope() -> dict:
     from .envelope import Envelope, Mandate, sign as sign_envelope
     env = Envelope(
         sender="demo",
-        recipient="*",
+        to="*",
         goal="Показать, что подпись проверяется без сервера",
         task="Откройте исходник страницы: проверка идёт в браузере, запросов нет.",
         capability=["verify"],
@@ -406,7 +406,7 @@ def _verify_page(envelope: dict) -> str:
     """Публичная страница проверки подписи: всё считается в браузере."""
     import html as _html
     body = _html.escape(json.dumps(envelope, ensure_ascii=False, indent=1))
-    return _VERIFY_HTML % {"envelope": body}
+    return _VERIFY_HTML.replace("__ENVELOPE__", body)
 
 
 _VERIFY_HTML = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
@@ -426,7 +426,7 @@ _VERIFY_HTML = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <p>Ниже настоящий конверт, подписанный ключом узла. Нажмите «Проверить»: подпись
 проверяется <b>в этом браузере</b>, без запроса к серверу. Затем нажмите «Испортить
 одно поле» — подпись перестанет сходиться.</p>
-<textarea id="env" spellcheck="false">%(envelope)s</textarea>
+<textarea id="env" spellcheck="false">__ENVELOPE__</textarea>
 <div>
  <button class="primary" id="verify">Проверить подпись</button>
  <button id="tamper">Испортить одно поле</button>
