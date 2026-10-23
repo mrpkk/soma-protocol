@@ -46,12 +46,14 @@ def test_tampered_body_fails_even_with_legacy_path():
     assert not ok and "не сошлась" in why
 
 
-def test_wrong_key_fails():
+def test_foreign_client_key_is_refused():
+    """Ключ едет в подписи, поэтому происхождение сверяется с реестром отдельно."""
     signer = Ed25519Signer(key=os.urandom(32))
     env = _env()
     env.mandate = {}
-    env.signature = signer.sign(env)
+    sig = signer.sign(env)
+    sig["signer"] = "client"
+    env.signature = sig
     env.mandate = None
-    other = Ed25519Signer(key=os.urandom(32))
-    ok, _ = other.verify(env)
-    assert not ok
+    ok, why = signer.verify(env, expected_public_key="AAAA")
+    assert not ok and "ключ" in why

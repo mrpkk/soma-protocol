@@ -377,6 +377,122 @@ def _landing(stats: dict[str, object]) -> str:
 </main>
 """
 
+
+
+def _sample_envelope() -> dict:
+    """Подписанный конверт для витрины: настоящий ключ узла, настоящая подпись.
+
+    Ничего не подделываем: если подпись не сойдётся у посетителя, значит сломан
+    протокол, а не демонстрация.
+    """
+    from .envelope import Envelope, Mandate, sign as sign_envelope
+    env = Envelope(
+        sender="demo",
+        recipient="*",
+        goal="Показать, что подпись проверяется без сервера",
+        task="Откройте исходник страницы: проверка идёт в браузере, запросов нет.",
+        capability=["verify"],
+        token_budget=2000,
+        mandate=Mandate(max_cost_usd=0.01, max_calls=1, rules=["budget", "expiry"]),
+        price_usdc=0.0,
+        ttl_s=86400,
+        visibility="public",
+    )
+    signed = sign_envelope(env)
+    return signed.to_dict() if hasattr(signed, "to_dict") else dict(signed)
+
+
+def _verify_page(envelope: dict) -> str:
+    """Публичная страница проверки подписи: всё считается в браузере."""
+    import html as _html
+    body = _html.escape(json.dumps(envelope, ensure_ascii=False, indent=1))
+    return _VERIFY_HTML % {"envelope": body}
+
+
+_VERIFY_HTML = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Проверка подписи конверта — Soma</title>
+<style>
+ body{font:15px/1.5 system-ui,sans-serif;max-width:860px;margin:32px auto;padding:0 16px;color:#111}
+ h1{font-size:22px;margin:0 0 8px} p{color:#444}
+ textarea{width:100%;min-height:240px;font:13px/1.45 ui-monospace,monospace;padding:10px;border:1px solid #ccc;border-radius:8px}
+ button{margin:10px 8px 0 0;padding:9px 14px;border:1px solid #333;border-radius:8px;background:#fff;font:inherit;cursor:pointer}
+ button.primary{background:#111;color:#fff}
+ #out{margin-top:14px;padding:12px;border-radius:8px;font-weight:600}
+ .ok{background:#e8f7ee;color:#0d6b34} .bad{background:#fdecec;color:#9b1c1c} .wait{background:#f2f2f2;color:#444}
+ small{color:#666}
+</style></head><body>
+<h1>Проверка подписи конверта</h1>
+<p>Ниже настоящий конверт, подписанный ключом узла. Нажмите «Проверить»: подпись
+проверяется <b>в этом браузере</b>, без запроса к серверу. Затем нажмите «Испортить
+одно поле» — подпись перестанет сходиться.</p>
+<textarea id="env" spellcheck="false">%(envelope)s</textarea>
+<div>
+ <button class="primary" id="verify">Проверить подпись</button>
+ <button id="tamper">Испортить одно поле</button>
+ <button id="reset">Вернуть как было</button>
+</div>
+<div id="out" class="wait">Подпись ещё не проверялась</div>
+<p><small>Канонизация: ключи по алфавиту, без пробелов, целые числа — целые.
+Алгоритм Ed25519 через WebCrypto. Если браузер его не поддерживает, страница скажет прямо.</small></p>
+<script>
+const ORIGINAL = document.getElementById('env').value;
+const out = document.getElementById('out');
+function canonical(value) {
+  const norm = (v) => {
+    if (v === null || typeof v === 'string' || typeof v === 'boolean') return v;
+    if (typeof v === 'number') return v;
+    if (Array.isArray(v)) return v.map(norm);
+    if (typeof v === 'object') {
+      const o = {};
+      for (const k of Object.keys(v).sort()) if (v[k] !== null) o[k] = norm(v[k]);
+      return o;
+    }
+    return v;
+  };
+  return JSON.stringify(norm(value));
+}
+function b64ToBytes(b64) {
+  const bin = atob(b64); const a = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+  return a;
+}
+async function check() {
+  out.className = 'wait'; out.textContent = 'Проверяем…';
+  let obj;
+  try { obj = JSON.parse(document.getElementById('env').value); }
+  catch (e) { out.className = 'bad'; out.textContent = 'Это не JSON: ' + e.message; return; }
+  const sig = obj.signature || {};
+  if (!sig.signature || !sig.public_key) {
+    out.className = 'bad'; out.textContent = 'В конверте нет подписи — проверять нечего'; return;
+  }
+  const payload = { ...obj };
+  for (const k of ['signature', 'routing', 'result', 'status']) delete payload[k];
+  const data = new TextEncoder().encode(canonical(payload));
+  try {
+    const key = await crypto.subtle.importKey('raw', b64ToBytes(sig.public_key), { name: 'Ed25519' }, false, ['verify']);
+    const ok = await crypto.subtle.verify({ name: 'Ed25519' }, key, b64ToBytes(sig.signature), data);
+    out.className = ok ? 'ok' : 'bad';
+    out.textContent = ok ? 'Подпись верна. Тело не менялось после подписи.'
+                         : 'Подпись НЕ сходится: тело изменили после подписи.';
+  } catch (e) {
+    out.className = 'wait';
+    out.textContent = 'Браузер не поддерживает Ed25519 в WebCrypto: ' + e.message;
+  }
+}
+document.getElementById('verify').onclick = check;
+document.getElementById('tamper').onclick = () => {
+  const o = JSON.parse(document.getElementById('env').value);
+  o.goal = (o.goal || '') + ' (изменено после подписи)';
+  document.getElementById('env').value = JSON.stringify(o, null, 1);
+  check();
+};
+document.getElementById('reset').onclick = () => {
+  document.getElementById('env').value = ORIGINAL;
+  out.className = 'wait'; out.textContent = 'Подпись ещё не проверялась';
+};
+</script></body></html>"""
+
 def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
     """ASGI-приложение MCP: transport-security и управляемый профиль."""
     import hmac
@@ -429,6 +545,14 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
         app.router.routes.insert(0, Route(_p, _landing_route))
     for _p in ("/hub/status", "/status"):
         app.router.routes.insert(0, Route(_p, _status_route))
+
+    async def _verify_route(request):
+        from starlette.responses import HTMLResponse
+        return HTMLResponse(_verify_page(_sample_envelope()),
+                            headers={"Cache-Control": "no-store, must-revalidate"})
+
+    for _p in ("/hub/verify", "/verify"):
+        app.router.routes.insert(0, Route(_p, _verify_route))
 
     async def _export_route(request):
         h = hub()
