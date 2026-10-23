@@ -20,7 +20,7 @@ def test_registration_requires_proof_of_key_ownership(tmp_path):
     reg = Registry(path=tmp_path / "r.json")
     reg.issue_nonce("a1")
     ok, why = reg.register("a1", "AAAA", capabilities=["x"])
-    assert not ok and "доказательство" in why
+    assert not ok and "доказательств" in why
 
 
 def test_registration_without_nonce_is_refused(tmp_path):
