@@ -287,10 +287,23 @@ class Memory:
                           (src, relation, dst, time.time()))
         self.conn.commit()
 
-    def recall(self, query: str, k: int = 20) -> list[dict[str, Any]]:
-        """Найти факты: сначала полнотекстовый индекс (FTS5, trigram), при отказе — LIKE."""
+    def recall(self, query: str, k: int = 20, since: float | None = None,
+               until: float | None = None, kind: str = "") -> list[dict[str, Any]]:
+        """Найти факты: два канала (FTS bm25 и теги), слияние RRF, фильтры по времени и типу.
+
+        Идея слияния взята у Hindsight (MIT): один канал всегда что-то теряет —
+        полнотекст не видит теги, теги не видят смысл. RRF складывает ранги,
+        а не оценки, поэтому каналы не нужно калибровать между собой.
+        """
         with self.lock:
-            return self._recall(query, k)
+            rows = self._recall(query, k * 3)
+        if since is not None:
+            rows = [r for r in rows if (r.get("created_at") or 0) >= since]
+        if until is not None:
+            rows = [r for r in rows if (r.get("created_at") or 0) <= until]
+        if kind:
+            rows = [r for r in rows if (r.get("kind") or "fact") == kind]
+        return rows[:k]
 
     def _recall(self, query: str, k: int = 20) -> list[dict[str, Any]]:
         query = (query or "").strip()
@@ -300,21 +313,76 @@ class Memory:
         if not terms:
             return []
         match = " OR ".join(f'"{t}"' for t in terms[:6])
+        # Канал 1 — полнотекст по смыслу (bm25). Канал 2 — теги: у факта может не быть
+        # слова из запроса в тексте, но он помечен нужным тегом.
+        by_id: dict[int, dict[str, Any]] = {}
+        ranks: dict[int, float] = {}
         try:
-            rows = self.conn.execute(
+            fts = self.conn.execute(
                 "SELECT f.* FROM facts_fts JOIN facts f ON f.id = facts_fts.rowid"
                 " WHERE facts_fts MATCH ? AND f.status='active'"
-                # bm25 — релевантность запросу; важность и свежесть решают при равенстве.
-                " ORDER BY bm25(facts_fts), f.importance DESC, f.updated_at DESC LIMIT ?", (match, k)).fetchall()
-            if rows:
-                return [dict(r) for r in rows]
+                " ORDER BY bm25(facts_fts), f.importance DESC, f.updated_at DESC LIMIT ?",
+                (match, k)).fetchall()
         except sqlite3.Error:
-            pass  # индекс недоступен — падаем на LIKE ниже
+            fts = []
+        for rank, row in enumerate(fts):
+            d = dict(row); by_id[d["id"]] = d; ranks[d["id"]] = ranks.get(d["id"], 0) + 1.0 / (60 + rank)
+        if terms:
+            like = " OR ".join("tags LIKE ?" for _ in terms[:6])
+            tagged = self.conn.execute(
+                f"SELECT * FROM facts WHERE status='active' AND ({like}) LIMIT ?",
+                (*[f"%{t}%" for t in terms[:6]], k)).fetchall()
+            for rank, row in enumerate(tagged):
+                d = dict(row)
+                if d["id"] not in by_id:
+                    by_id[d["id"]] = d
+                ranks[d["id"]] = ranks.get(d["id"], 0) + 1.0 / (60 + rank)
+        # Канал 3 — основы слов: в русском «подпись» и «подписан» — одно слово,
+        # а FTS видит разные токены. Пять первых букв дают совпадение без стеммера.
+        stems = sorted({t_[:5] for t_ in terms if len(t_) >= 5})
+        if stems:
+            cond = " OR ".join("(text LIKE ? OR tags LIKE ?)" for _ in stems)
+            params: list[Any] = []
+            for s_ in stems:
+                params += [f"%{s_}%", f"%{s_}%"]
+            stem_rows = self.conn.execute(
+                f"SELECT * FROM facts WHERE status='active' AND ({cond}) LIMIT ?",
+                (*params, k)).fetchall()
+            for rank, row in enumerate(stem_rows):
+                d = dict(row)
+                if d["id"] not in by_id:
+                    by_id[d["id"]] = d
+                ranks[d["id"]] = ranks.get(d["id"], 0) + 1.0 / (60 + rank)
+        if by_id:
+            order = sorted(ranks, key=lambda i: (-ranks[i], -(by_id[i].get("importance") or 3),
+                                                 -(by_id[i].get("updated_at") or 0)))
+            return [by_id[i] for i in order][:k]
         where = " OR ".join(f"text LIKE ?" for _ in terms[:6])
         rows = self.conn.execute(
             f"SELECT * FROM facts WHERE status='active' AND ({where}) ORDER BY importance DESC, updated_at DESC LIMIT ?",
             (*[f"%{t}%" for t in terms[:6]], k)).fetchall()
         return [dict(r) for r in rows]
+
+    def reflect(self, query: str, k: int = 8, save: bool = True) -> dict[str, Any]:
+        """Собрать наблюдение по запросу: факты + источники + связи.
+
+        Это не «магия LLM», а честная агрегация: наблюдение всегда указывает,
+        из каких фактов оно выведено (рёбра derived_from). Идея — из Hindsight:
+        память ценна не отдельными записями, а связкой «что из чего следует».
+        """
+        rows = self.recall(query, k=k)
+        if not rows:
+            return {"query": query, "count": 0, "observation": None, "sources": []}
+        observation = " | ".join(r["text"] for r in rows)
+        out: dict[str, Any] = {"query": query, "count": len(rows),
+                               "sources": [r["id"] for r in rows], "observation": observation}
+        if save:
+            fid = self.remember(observation, tags=("observation," + query)[:300],
+                                importance=4, kind="observation", source="reflect")
+            for r in rows:
+                self.link(fid, "derived_from", r["id"])
+            out["observation_id"] = fid
+        return out
 
     # ── холодный ярус ─────────────────────────────────────────
     def put_cold(self, text: str) -> str:

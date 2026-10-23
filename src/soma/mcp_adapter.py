@@ -151,6 +151,13 @@ async def soma_export(limit: int = 5000) -> str:
                       ensure_ascii=False, default=str)
 
 
+@mcp.tool(name="soma_reflect",
+          description="Собрать наблюдение по запросу: связка фактов с источниками и рёбрами derived_from. Ответ указывает, из чего выведен.")
+async def soma_reflect(query: str, k: int = 8, save: bool = True) -> str:
+    return json.dumps(hub().memory.reflect(query, k=k, save=save),
+                      ensure_ascii=False, default=str)
+
+
 @mcp.tool(name="soma_cold_put",
           description="Положить большой артефакт в холодный ярус. Возвращает ссылку sha256 — тело не жжёт контекст.")
 async def soma_cold_put(text: str) -> str:
@@ -183,6 +190,7 @@ _TOOLS = [
     ("soma_cold_put", "Put a large artifact in the cold tier; get a sha256 reference instead of a body."),
     ("soma_cold_get", "Fetch a cold artifact by sha256; content is checked against the hash."),
     ("soma_stats", "Node state: envelopes by status, facts, edges, cold artifacts, database size."),
+    ("soma_reflect", "Form an observation from related facts; the answer names its sources (derived_from edges)."),
     ("soma_export", "Export every fact and envelope as one JSON — the right to leave, with no lock-in."),
 ]
 
