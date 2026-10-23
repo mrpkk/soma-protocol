@@ -75,9 +75,12 @@ END;
 CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
   INSERT INTO facts_fts(facts_fts, rowid, text, tags) VALUES('delete', old.id, old.text, old.tags);
 END;
-CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-  INSERT INTO facts_fts(facts_fts, rowid, text, tags) VALUES('delete', old.id, old.text, old.tags);
-  INSERT INTO facts_fts(rowid, text, tags) VALUES (new.id, new.text, new.tags);
+-- Триграммный FTS5 не принимает команду 'delete' (SQL logic error), поэтому
+-- обновление идёт через REPLACE. DROP нужен и для уже созданных баз: иначе
+-- старый сломанный триггер остаётся жить.
+DROP TRIGGER IF EXISTS facts_au;
+CREATE TRIGGER facts_au AFTER UPDATE ON facts BEGIN
+  INSERT OR REPLACE INTO facts_fts(rowid, text, tags) VALUES (new.id, new.text, new.tags);
 END;
 """
 
