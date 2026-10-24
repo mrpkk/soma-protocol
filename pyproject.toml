@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soma-protocol"
-version = "1.3.1"
+version = "1.3.2"
 description = "Soma — протокол коммуникации агентов: доверие, память, расчёт"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,9 @@ dev = ["pytest>=8", "cryptography>=42", "jsonschema>=4.20"]
 
 [project.scripts]
 soma = "soma.cli:main"
+# Отдельная точка входа для MCP: каталоги (Glama и др.) ищут скрипт с mcp в имени,
+# иначе запускают `python -m soma.mcp_adapter` мимо venv и падают.
+soma-mcp = "soma.mcp_adapter:main"
 
 [project.entry-points."soma.plugins"]
 # Здесь регистрируют себя закрытые движки Mitra Core (attest, drift, agentpay, indra-memory).
@@ -44,3 +47,12 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[dependency-groups]
+# Каталоги (Glama и др.) собирают сервер командой `uv sync` и не умеют передавать
+# `--extra mcp`. Группа ставится по умолчанию (см. [tool.uv]) и НЕ входит в базовые
+# зависимости пакета: `pip install soma-protocol` остаётся лёгким.
+mcp = ["mcp>=2.0"]
+
+[tool.uv]
+default-groups = ["mcp"]
