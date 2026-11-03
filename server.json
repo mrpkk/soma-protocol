@@ -3,7 +3,7 @@
   "name": "io.github.mrpkk/soma-protocol",
   "title": "Soma — open protocol for agent work",
   "description": "Signed envelopes with token budget, mandate and price; conformance suite included.",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "repository": {
     "url": "https://github.com/mrpkk/soma-protocol",
     "source": "github"
@@ -13,5 +13,6 @@
       "type": "streamable-http",
       "url": "https://rta.lat/soma-protocol/mcp"
     }
-  ]
+  ],
+  "websiteUrl": "https://rta.lat/soma/pricing"
 }

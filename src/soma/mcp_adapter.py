@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover
     print("нужен mcp SDK: pip install \"soma-protocol[mcp]\"", file=sys.stderr)
     raise
 
+from . import x402_gate
 from .envelope import Envelope, Mandate, verify
 from .memory import Memory
 from .registry import Registry
@@ -677,6 +678,49 @@ def _build_app(http_path: str, rate_limit: int = 0, force_visibility: str = ""):
         # Видимость читается инструментом в момент вызова — выставляем здесь,
         # чтобы параметр сборки приложения и поведение инструмента совпадали.
         os.environ["SOMA_FORCE_VISIBILITY"] = force_visibility
+
+    # ── цена и оплата ───────────────────────────────────────────────────
+    # Бесплатный лимит в день, дальше 402 по x402. Канон цены — tablets.md §6:
+    # вызов $0.02, подписка $19/мес. Без гейта сервер бесплатен навсегда, и в
+    # каталогах у него нет цены, которую можно показать.
+    gate_cfg = x402_gate.config("soma", "https://rta.lat/soma/mcp")
+    if gate_cfg is not None:
+        from starlette.requests import Request
+
+        async def _pricing_route(request):
+            from starlette.responses import HTMLResponse
+            page = x402_gate.pricing_page(
+                gate_cfg, title="Soma — open protocol for agent work",
+                what=("Signed envelopes with token budget, mandate and price: send, "
+                      "claim, complete, remember. Conformance suite included."),
+                docs="https://rta.lat/soma/llms-install.md")
+            return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+        async def _pricing_json(request):
+            return JSONResponse(
+                {"service": "soma", "price_usd": gate_cfg.price_usd,
+                 "free_per_day": gate_cfg.free_per_day,
+                 "subscription_usd": gate_cfg.sub_price_usd,
+                 "subscription_period_days": 30,
+                 "network": gate_cfg.network, "pay_to": gate_cfg.pay_to,
+                 "resource": gate_cfg.resource},
+                headers={"Cache-Control": "no-store"})
+
+        async def _subscribe_route(request: Request):
+            status, body, extra = x402_gate.subscribe(
+                gate_cfg, request.headers.get("x-payment")
+                or request.headers.get("payment-signature") or "")
+            return JSONResponse(body, status_code=status, headers=extra)
+
+        app.router.routes.insert(0, Route("/soma/pricing.json", _pricing_json))
+        app.router.routes.insert(0, Route("/hub/pricing.json", _pricing_json))
+        app.router.routes.insert(0, Route("/soma/pricing", _pricing_route))
+        app.router.routes.insert(0, Route("/hub/pricing", _pricing_route))
+        for _p in ("/soma/subscribe", "/hub/subscribe", "/subscribe"):
+            app.router.routes.insert(0, Route(_p, _subscribe_route, methods=["POST"]))
+        # Гейт ставится последним: 402 решается до парсера MCP.
+        app = x402_gate.middleware(
+            gate_cfg, x402_gate.DailyQuota(gate_cfg.free_per_day))(app)
     return app
 
 
