@@ -21,6 +21,7 @@ import time
 
 try:
     from mcp.server.mcpserver import MCPServer
+    from mcp.types import ToolAnnotations
 except ImportError:  # pragma: no cover
     print("нужен mcp SDK: pip install \"soma-protocol[mcp]\"", file=sys.stderr)
     raise
@@ -33,6 +34,14 @@ from .server import Hub
 
 mcp = MCPServer("soma", version="1.0.0")
 _HUB: Hub | None = None
+
+# Описания и аннотации — на английском и с readOnlyHint: каталоги (Glama,
+# mcpservers.org, официальный реестр MCP) показывают аннотации бейджем
+# «read-only» и отсеивают серверы без них.
+_READONLY = dict(read_only_hint=True, destructive_hint=False,
+                 idempotent_hint=True, open_world_hint=False)
+_WRITE = dict(read_only_hint=False, destructive_hint=False,
+              idempotent_hint=False, open_world_hint=False)
 
 
 def hub() -> Hub:
@@ -58,7 +67,9 @@ def _forced_visibility() -> str:
 
 
 @mcp.tool(name="soma_send",
-          description="Отправить конверт агенту: цель, задача, получатель, бюджет токенов, мандат и цена. Конверт подписывается и попадает в очередь.")
+          title="Send an envelope to an agent",
+          description="Send an envelope to an agent: goal, task, recipient, token budget, mandate and price. The envelope is signed and queued.",
+          annotations=ToolAnnotations(title="Send an envelope to an agent", **_WRITE))
 async def soma_send(goal: str, task: str, to: str = "*", sender: str = "mcp",
                      capability: list[str] | None = None, token_budget: int = 2000,
                      context_query: str = "", max_cost_usd: float | None = None,
@@ -75,32 +86,42 @@ async def soma_send(goal: str, task: str, to: str = "*", sender: str = "mcp",
 
 
 @mcp.tool(name="soma_inbox",
-          description="Что ждёт агента: конверты, проверка подписи и контекст, собранный под бюджет токенов.")
+          title="Agent inbox",
+          description="What waits for the agent: envelopes, signature verification and context packed under a token budget.",
+          annotations=ToolAnnotations(title="Agent inbox", **_READONLY))
 async def soma_inbox(agent: str, limit: int = 10) -> str:
     return json.dumps(hub().inbox(agent, limit), ensure_ascii=False, default=str)
 
 
 @mcp.tool(name="soma_claim",
-          description="Забрать конверт из очереди (эксклюзивно) и получить контекст под бюджет. Если у работы назначена цена — нужна квитанция.")
+          title="Claim an envelope",
+          description="Take an envelope from the queue exclusively and get context packed under its budget. If the work carries a price, a receipt is required.",
+          annotations=ToolAnnotations(title="Claim an envelope", **_WRITE))
 async def soma_claim(id: str, agent: str, payment: str = "") -> str:
     return json.dumps(hub().claim(id, agent, payment=payment),
                       ensure_ascii=False, default=str)
 
 
 @mcp.tool(name="soma_complete",
-          description="Закрыть конверт результатом работы.")
+          title="Complete an envelope",
+          description="Close an envelope with the result of the work.",
+          annotations=ToolAnnotations(title="Complete an envelope", **_WRITE))
 async def soma_complete(id: str, result: str, agent: str = "") -> str:
     return json.dumps(hub().complete(id, {"text": result}, agent or None), ensure_ascii=False)
 
 
 @mcp.tool(name="soma_route",
-          description="Подобрать исполнителя по capability, мандату и цене. Если кандидата нет — вернётся честная причина отказа.")
+          title="Route an envelope to an executor",
+          description="Pick an executor by capability, mandate and price. If no candidate fits, the refusal names every reason.",
+          annotations=ToolAnnotations(title="Route an envelope to an executor", **dict(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True)))
 async def soma_route(id: str) -> str:
     return json.dumps(hub().route(id), ensure_ascii=False, indent=2)
 
 
 @mcp.tool(name="soma_verify",
-          description="Проверить подпись конверта офлайн: Ed25519, публичный ключ едет вместе с подписью.")
+          title="Verify an envelope signature",
+          description="Verify an envelope signature offline: Ed25519, the public key travels with the signature.",
+          annotations=ToolAnnotations(title="Verify an envelope signature", **_READONLY))
 async def soma_verify(envelope_json: str) -> str:
     env = Envelope.from_dict(json.loads(envelope_json))
     ok, why = verify(env)
@@ -109,7 +130,9 @@ async def soma_verify(envelope_json: str) -> str:
 
 
 @mcp.tool(name="soma_stats",
-          description="Состояние хаба: конверты по статусам, факты, связи, холодные артефакты.")
+          title="Node stats",
+          description="Node state: envelopes by status, facts, edges, cold artifacts.",
+          annotations=ToolAnnotations(title="Node stats", **_READONLY))
 async def soma_stats() -> str:
     return json.dumps(hub().memory.stats(), ensure_ascii=False, indent=2)
 
@@ -120,7 +143,9 @@ async def soma_stats() -> str:
 # что и очередь, поэтому факты и обязательства видны вместе.
 
 @mcp.tool(name="soma_remember",
-          description="Запомнить факт: переживает сессии и смену модели. Теги для поиска, importance 1–5.")
+          title="Remember a fact",
+          description="Store a fact: it survives sessions and model changes. Tags for search, importance 1-5.",
+          annotations=ToolAnnotations(title="Remember a fact", **_WRITE))
 async def soma_remember(text: str, tags: str = "", importance: int = 3,
                         kind: str = "fact", source: str = "", session: str = "") -> str:
     fid = hub().memory.remember(text, tags=tags, importance=importance,
@@ -129,7 +154,9 @@ async def soma_remember(text: str, tags: str = "", importance: int = 3,
 
 
 @mcp.tool(name="soma_recall",
-          description="Найти факты: полнотекстовый поиск по смыслу, ранжирование по важности и свежести.")
+          title="Recall facts",
+          description="Find facts: full-text search by meaning, ranked by importance and recency.",
+          annotations=ToolAnnotations(title="Recall facts", **_READONLY))
 async def soma_recall(query: str, k: int = 10) -> str:
     rows = hub().memory.recall(query, k=k)
     return json.dumps({"query": query, "count": len(rows), "facts": rows},
@@ -137,7 +164,9 @@ async def soma_recall(query: str, k: int = 10) -> str:
 
 
 @mcp.tool(name="soma_export",
-          description="Выгрузить все факты и конверты узла одним JSON — право выхода без замка и без удаления за вами.")
+          title="Export node data",
+          description="Export every fact and envelope as one JSON - the right to leave, with no lock-in.",
+          annotations=ToolAnnotations(title="Export node data", **_READONLY))
 async def soma_export(limit: int = 5000) -> str:
     h = hub()
     with h.memory.lock:
@@ -153,14 +182,18 @@ async def soma_export(limit: int = 5000) -> str:
 
 
 @mcp.tool(name="soma_nonce",
-          description="Одноразовый нонс для регистрации внешнего агента: доказательство владения ключом.")
+          title="Issue a registration nonce",
+          description="One-time nonce for registering an external agent: proof of key ownership.",
+          annotations=ToolAnnotations(title="Issue a registration nonce", **_WRITE))
 async def soma_nonce(agent: str) -> str:
     return json.dumps({"agent": agent, "nonce": hub().registry.issue_nonce(agent)},
                       ensure_ascii=False)
 
 
 @mcp.tool(name="soma_register",
-          description="Зарегистрировать внешнего агента: имя, публичный ключ Ed25519, подпись нонса, способности и цена за вызов.")
+          title="Register an external agent",
+          description="Register an external agent: name, Ed25519 public key, nonce signature, capabilities and price per call.",
+          annotations=ToolAnnotations(title="Register an external agent", **_WRITE))
 async def soma_register(agent: str, public_key: str, proof: str,
                         capabilities: list[str] | None = None,
                         cost_per_call: float = 0.0) -> str:
@@ -170,7 +203,9 @@ async def soma_register(agent: str, public_key: str, proof: str,
 
 
 @mcp.tool(name="soma_agents",
-          description="Реестр агентов: кто зарегистрирован, что умеет, сколько стоит. Публичная витрина доверия.")
+          title="Agent registry",
+          description="Registry of agents: who is registered, what they can do, what it costs. A public showcase of trust.",
+          annotations=ToolAnnotations(title="Agent registry", **_READONLY))
 async def soma_agents() -> str:
     reg = hub().registry.agents or {}
     rows = [{"agent": k, "capabilities": v.get("capabilities", []),
@@ -181,27 +216,35 @@ async def soma_agents() -> str:
 
 
 @mcp.tool(name="soma_reputation",
-          description="Репутация агента по фактам: подписанные квитанции, нарушения и итоговый счёт.")
+          title="Agent reputation",
+          description="Agent reputation from facts: signed receipts, violations and the running score.",
+          annotations=ToolAnnotations(title="Agent reputation", **_READONLY))
 async def soma_reputation(agent: str) -> str:
     return json.dumps({"agent": agent, "score": hub().reputation.score(agent)},
                       ensure_ascii=False, default=str)
 
 
 @mcp.tool(name="soma_reflect",
-          description="Собрать наблюдение по запросу: связка фактов с источниками и рёбрами derived_from. Ответ указывает, из чего выведен.")
+          title="Reflect on facts",
+          description="Collect an observation for a query: facts linked to sources and derived_from edges. The answer names what it was derived from.",
+          annotations=ToolAnnotations(title="Reflect on facts", **_WRITE))
 async def soma_reflect(query: str, k: int = 8, save: bool = True) -> str:
     return json.dumps(hub().memory.reflect(query, k=k, save=save),
                       ensure_ascii=False, default=str)
 
 
 @mcp.tool(name="soma_cold_put",
-          description="Положить большой артефакт в холодный ярус. Возвращает ссылку sha256 — тело не жжёт контекст.")
+          title="Store a cold artifact",
+          description="Put a large artifact in the cold tier. Returns a sha256 reference - the body does not burn context.",
+          annotations=ToolAnnotations(title="Store a cold artifact", **_WRITE))
 async def soma_cold_put(text: str) -> str:
     return json.dumps({"ref": hub().memory.put_cold(text), "stored": True}, ensure_ascii=False)
 
 
 @mcp.tool(name="soma_cold_get",
-          description="Достать артефакт по ссылке sha256; содержимое сверяется с хешем.")
+          title="Fetch a cold artifact",
+          description="Fetch an artifact by sha256 reference; the content is checked against the hash.",
+          annotations=ToolAnnotations(title="Fetch a cold artifact", **_READONLY))
 async def soma_cold_get(ref: str) -> str:
     text = hub().memory.get_cold(ref)
     ok = text is not None
